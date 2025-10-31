@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { ParkingSpace } from '../../types';
-import { getToday, getTomorrow, toYYYYMMDD } from '../../utils/dateUtils';
+import { getToday, getTomorrow, toYYYYMMDD, parseYYYYMMDD } from '../../utils/dateUtils';
 
 interface MarkAvailableModalProps {
   spot: ParkingSpace;
@@ -89,8 +89,8 @@ const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onRequest
   };
 
   const handleMarkAvailable = () => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = parseYYYYMMDD(startDate);
+    const end = parseYYYYMMDD(endDate);
     if (start > end) {
       setError('Start date cannot be after end date.');
       return;

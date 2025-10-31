@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { MOCK_USERS } from './constants';
 import type { User, ParkingSpace, Availability } from './types';
@@ -8,11 +9,11 @@ import AssignOwnerModal from './components/modals/AssignOwnerModal';
 import MarkAvailableModal from './components/modals/MarkAvailableModal';
 import ConfirmationModal from './components/modals/ConfirmationModal';
 import OwnerView from './components/OwnerView';
-import { getToday, toYYYYMMDD } from './utils/dateUtils';
+import { getToday, getTomorrow, toYYYYMMDD } from './utils/dateUtils';
 import { Role } from './types';
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[0]);
+  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[4]); // Default to a user with no spot
   const [parkingSpaces, setParkingSpaces] = useState<ParkingSpace[]>([
     { id: 1, ownerId: 'user-1' },
     { id: 2, ownerId: 'user-2' },
@@ -28,6 +29,24 @@ const App: React.FC = () => {
       endDate: getToday(),
       claimedById: 'user-5',
     },
+    {
+      id: 'avail-2',
+      spotId: 3,
+      startDate: getTomorrow(),
+      endDate: (() => {
+        const d = getTomorrow();
+        d.setDate(d.getDate() + 3);
+        return d;
+      })(),
+      claimedById: null,
+    },
+    {
+      id: 'avail-3',
+      spotId: 4,
+      startDate: (() => { const d = new Date(); d.setDate(d.getDate() + 8); return d; })(),
+      endDate: (() => { const d = new Date(); d.setDate(d.getDate() + 10); return d; })(),
+      claimedById: null,
+    }
   ]);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -41,6 +60,9 @@ const App: React.FC = () => {
     confirmButtonText?: string;
     confirmButtonVariant?: 'primary' | 'destructive';
   } | null>(null);
+  
+  const [viewMode, setViewMode] = useState<'default' | 'all'>('default');
+  const [weekOffset, setWeekOffset] = useState(0); // 0 for current week, 1 for next week
 
   const isAdmin = currentUser.role === Role.Admin;
   const usersWithoutSpots = useMemo(
@@ -53,12 +75,44 @@ const App: React.FC = () => {
     [parkingSpaces, currentUser]
   );
 
-  const userHasClaimedSpot = useMemo(
-    () => availabilities.some(a => a.claimedById === currentUser.id),
+  const claimedAvailability = useMemo(
+    () => availabilities.find(a => a.claimedById === currentUser.id),
     [availabilities, currentUser]
   );
+  const userHasClaimedSpot = !!claimedAvailability;
   
   const canClaimSpot = !ownedSpot && !userHasClaimedSpot;
+
+  const displayedSpaces = useMemo(() => {
+    const today = getToday();
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay() + (weekOffset * 7));
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+
+    if (isAdmin) {
+      return viewMode === 'default' ? parkingSpaces.filter(p => p.ownerId) : parkingSpaces;
+    }
+
+    if (viewMode === 'default' && !ownedSpot) {
+      if (claimedAvailability) {
+        return parkingSpaces.filter(space => space.id === claimedAvailability.spotId);
+      }
+      return parkingSpaces.filter(space =>
+        availabilities.some(a =>
+          a.spotId === space.id &&
+          !a.claimedById &&
+          a.startDate.getTime() <= endOfWeek.getTime() &&
+          a.endDate.getTime() >= startOfWeek.getTime()
+        )
+      );
+    }
+    
+    return parkingSpaces;
+  }, [viewMode, isAdmin, parkingSpaces, availabilities, ownedSpot, claimedAvailability, weekOffset]);
+
+  const handleNextWeek = () => setWeekOffset(prev => Math.min(prev + 1, 1));
+  const handlePreviousWeek = () => setWeekOffset(prev => Math.max(prev - 1, 0));
 
   const handleAddSpot = () => {
     setParkingSpaces(prev => [...prev, { id: prev.length > 0 ? Math.max(...prev.map(p => p.id)) + 1 : 1, ownerId: null }]);
@@ -157,9 +211,62 @@ const App: React.FC = () => {
     return { success: true, message: '' };
   };
 
-  const handleClaimSpot = (availabilityId: string) => {
+  const handleClaimDay = (availabilityId: string, dayToClaim: Date) => {
     if (!canClaimSpot) return;
-    setAvailabilities(prev => prev.map(a => a.id === availabilityId ? { ...a, claimedById: currentUser.id } : a));
+
+    const originalAvailability = availabilities.find(a => a.id === availabilityId);
+    if (!originalAvailability || originalAvailability.claimedById) {
+      console.error("Could not find availability or it's already claimed.");
+      return;
+    }
+
+    dayToClaim.setHours(0, 0, 0, 0);
+
+    const newAvailabilities: Availability[] = [];
+
+    const claimedAvailability: Availability = {
+      id: `avail-${Date.now()}`,
+      spotId: originalAvailability.spotId,
+      startDate: dayToClaim,
+      endDate: dayToClaim,
+      claimedById: currentUser.id,
+    };
+    newAvailabilities.push(claimedAvailability);
+
+    const originalStart = originalAvailability.startDate.getTime();
+    const originalEnd = originalAvailability.endDate.getTime();
+    const claimTime = dayToClaim.getTime();
+
+    if (claimTime > originalStart) {
+      const beforeEndDate = new Date(dayToClaim);
+      beforeEndDate.setDate(dayToClaim.getDate() - 1);
+      
+      newAvailabilities.push({
+        id: `avail-${Date.now()}-before`,
+        spotId: originalAvailability.spotId,
+        startDate: originalAvailability.startDate,
+        endDate: beforeEndDate,
+        claimedById: null,
+      });
+    }
+
+    if (claimTime < originalEnd) {
+      const afterStartDate = new Date(dayToClaim);
+      afterStartDate.setDate(dayToClaim.getDate() + 1);
+
+      newAvailabilities.push({
+        id: `avail-${Date.now()}-after`,
+        spotId: originalAvailability.spotId,
+        startDate: afterStartDate,
+        endDate: originalAvailability.endDate,
+        claimedById: null,
+      });
+    }
+
+    setAvailabilities(prev => [
+      ...prev.filter(a => a.id !== originalAvailability.id),
+      ...newAvailabilities,
+    ]);
   };
   
   const handleUnclaimSpot = (availabilityId: string) => {
@@ -228,12 +335,87 @@ const App: React.FC = () => {
   
   const bannerStyle: React.CSSProperties = {
     backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    padding: '12px 20px',
-    borderRadius: '8px',
+    padding: '20px',
+    borderRadius: '16px',
     marginBottom: '20px',
     textAlign: 'center',
     border: '1px solid rgba(255, 255, 255, 0.2)'
   };
+
+  const viewControlsStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '24px',
+  };
+
+  const viewTitleStyle: React.CSSProperties = {
+    margin: 0,
+    fontWeight: 700,
+    fontSize: '24px',
+  };
+
+  const toggleButtonStyle: React.CSSProperties = {
+    padding: '8px 16px',
+    border: '1px solid white',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    backgroundColor: 'transparent',
+    color: 'white',
+    fontFamily: "'Poppins', 'Source Serif Pro', sans-serif",
+    fontWeight: 500,
+  };
+
+  const weekButtonStyle: React.CSSProperties = {
+    padding: '8px 12px',
+    border: '1px solid white',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    backgroundColor: 'transparent',
+    color: 'white',
+    fontFamily: "'Poppins', 'Source Serif Pro', sans-serif",
+    fontWeight: 700,
+    fontSize: '16px',
+  };
+
+  const disabledButtonStyle: React.CSSProperties = {
+    opacity: 0.5,
+    cursor: 'not-allowed',
+    borderColor: 'rgba(255, 255, 255, 0.5)',
+    color: 'rgba(255, 255, 255, 0.5)',
+  };
+  
+  const getViewConfig = () => {
+    if (isAdmin) {
+      return viewMode === 'default'
+        ? { title: 'Owned Spots', buttonText: 'Show All Spots' }
+        : { title: 'All Spots', buttonText: 'Show Owned Only' };
+    }
+    if (viewMode === 'default') {
+      if (claimedAvailability) {
+        return { title: 'Your Claimed Spot', buttonText: 'Show All Spots' };
+      }
+      const weekTitle = weekOffset === 0 ? 'This Week' : 'Next Week';
+      return { title: `Available ${weekTitle}`, buttonText: 'Show All Spots' };
+    }
+    // 'all' view for non-admin
+    const buttonText = claimedAvailability ? 'Show My Claimed Spot' : 'Show Available This Week';
+    return { title: 'All Spots', buttonText };
+  };
+
+  const { title, buttonText } = getViewConfig();
+
+
+  const getEmptyStateMessage = () => {
+    if (isAdmin) {
+      return viewMode === 'default' ? 'No spots are currently assigned to users.' : 'There are no spots in the system. Add one!';
+    }
+    if (claimedAvailability) {
+        return 'Could not find your claimed spot.';
+    }
+    const weekText = weekOffset === 0 ? 'this week' : 'next week';
+    return viewMode === 'default' ? `No parking spots are available ${weekText}. Please check back later.` : 'There are no spots in the system.';
+  }
 
   return (
     <div style={{ fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", padding: '40px', backgroundColor: '#5A48E5', minHeight: '100vh', color: 'white' }}>
@@ -242,7 +424,11 @@ const App: React.FC = () => {
         <UserSwitcher
           users={MOCK_USERS}
           currentUser={currentUser}
-          onUserChange={setCurrentUser}
+          onUserChange={(user) => {
+            setCurrentUser(user);
+            setViewMode('default');
+            setWeekOffset(0);
+          }}
         />
       </header>
 
@@ -255,32 +441,67 @@ const App: React.FC = () => {
         />
       ) : (
         <>
-          {userHasClaimedSpot && !isAdmin && (
+          {userHasClaimedSpot && !isAdmin && viewMode === 'all' && (
              <div style={bannerStyle}>
                You have already claimed a spot. You can only claim one spot at a time.
              </div>
           )}
           <main>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-              {parkingSpaces.map(space => (
-                <ParkingSpaceCard
-                  key={space.id}
-                  space={space}
-                  owner={MOCK_USERS.find(u => u.id === space.ownerId)}
-                  availabilities={availabilities.filter(a => a.spotId === space.id)}
-                  currentUser={currentUser}
-                  isAdmin={isAdmin}
-                  canClaimSpot={canClaimSpot}
-                  onAssign={handleOpenAssignModal}
-                  onUnassign={handleRequestUnassign}
-                  onMarkAvailable={handleOpenMarkAvailableModal}
-                  onClaim={handleClaimSpot}
-                  onUnclaim={handleRequestUnclaim}
-                  onDelete={handleRequestDelete}
-                />
-              ))}
-              {isAdmin && <AddSpotCard onAddSpot={handleAddSpot} />}
+            <div style={viewControlsStyle}>
+               <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <h2 style={viewTitleStyle}>{title}</h2>
+                 {viewMode === 'default' && !ownedSpot && !isAdmin && !claimedAvailability && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                        style={{ ...weekButtonStyle, ...(weekOffset === 0 && disabledButtonStyle) }}
+                        disabled={weekOffset === 0}
+                        onClick={handlePreviousWeek}
+                    >
+                        &lt; Prev
+                    </button>
+                    <button
+                        style={{ ...weekButtonStyle, ...(weekOffset === 1 && disabledButtonStyle) }}
+                        disabled={weekOffset === 1}
+                        onClick={handleNextWeek}
+                    >
+                        Next &gt;
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button style={toggleButtonStyle} onClick={() => setViewMode(prev => prev === 'default' ? 'all' : 'default')}>
+                 {buttonText}
+              </button>
             </div>
+            
+            {displayedSpaces.length > 0 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+                {displayedSpaces.map(space => (
+                  <ParkingSpaceCard
+                    key={space.id}
+                    space={space}
+                    owner={MOCK_USERS.find(u => u.id === space.ownerId)}
+                    availabilities={availabilities.filter(a => a.spotId === space.id)}
+                    currentUser={currentUser}
+                    isAdmin={isAdmin}
+                    canClaimSpot={canClaimSpot}
+                    weekOffset={weekOffset}
+                    onAssign={handleOpenAssignModal}
+                    onUnassign={handleRequestUnassign}
+                    onMarkAvailable={handleOpenMarkAvailableModal}
+                    onClaimDay={handleClaimDay}
+                    onUnclaim={handleRequestUnclaim}
+                    onDelete={handleRequestDelete}
+                  />
+                ))}
+                {isAdmin && viewMode === 'all' && <AddSpotCard onAddSpot={handleAddSpot} />}
+              </div>
+            ) : (
+              <div style={bannerStyle}>
+                <p>{getEmptyStateMessage()}</p>
+                {isAdmin && viewMode === 'all' && <AddSpotCard onAddSpot={handleAddSpot} />}
+              </div>
+            )}
           </main>
         </>
       )}

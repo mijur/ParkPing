@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { ParkingSpace, Availability } from '../types';
 import { MOCK_USERS } from '../constants';
-import { toYYYYMMDD, getToday, getTomorrow } from '../utils/dateUtils';
+import { toYYYYMMDD, getToday, getTomorrow, parseYYYYMMDD } from '../utils/dateUtils';
 
 interface OwnerViewProps {
   spot: ParkingSpace;
@@ -133,8 +133,8 @@ const OwnerView: React.FC<OwnerViewProps> = ({
   };
 
   const handleConfirmAvailability = () => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = parseYYYYMMDD(startDate);
+    const end = parseYYYYMMDD(endDate);
     
     if (start > end) {
       setError('Start date cannot be after end date.');

@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { User, ParkingSpace, Availability } from '../types';
 import { getToday, getTomorrow, toYYYYMMDD } from '../utils/dateUtils';
@@ -10,10 +11,11 @@ interface ParkingSpaceCardProps {
   currentUser: User;
   isAdmin: boolean;
   canClaimSpot: boolean;
+  weekOffset: number; // 0 for current week, 1 for next week
   onAssign: (space: ParkingSpace) => void;
   onUnassign: (spotId: number) => void;
   onMarkAvailable: (space: ParkingSpace) => void;
-  onClaim: (availabilityId: string) => void;
+  onClaimDay: (availabilityId: string, date: Date) => void;
   onUnclaim: (availabilityId: string) => void;
   onDelete: (spotId: number) => void;
 }
@@ -83,6 +85,51 @@ const destructiveButtonStyle: React.CSSProperties = {
     border: '1px solid #FFB8B8'
 };
 
+const weekContainerStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '8px',
+};
+
+const dayCellStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '8px 4px',
+  borderRadius: '8px',
+  backgroundColor: 'rgba(0, 0, 0, 0.2)',
+  flex: 1,
+  textAlign: 'center',
+  transition: 'background-color 0.3s',
+};
+
+const availableDayStyle: React.CSSProperties = {
+  backgroundColor: '#3D9961',
+  color: 'white',
+};
+
+const claimedDayStyle: React.CSSProperties = {
+  backgroundColor: '#E5C55A',
+  color: '#333',
+};
+
+const todayHighlightStyle: React.CSSProperties = {
+  border: '1px solid white',
+  padding: '7px 3px',
+};
+
+const dayNameStyle: React.CSSProperties = {
+  fontSize: '12px',
+  fontWeight: 500,
+  opacity: 0.7,
+};
+
+const dayNumberStyle: React.CSSProperties = {
+  fontSize: '18px',
+  fontWeight: 700,
+};
+
 
 const ParkingSpaceCard: React.FC<ParkingSpaceCardProps> = ({
   space,
@@ -91,39 +138,27 @@ const ParkingSpaceCard: React.FC<ParkingSpaceCardProps> = ({
   currentUser,
   isAdmin,
   canClaimSpot,
+  weekOffset,
   onAssign,
   onUnassign,
   onMarkAvailable,
-  onClaim,
+  onClaimDay,
   onUnclaim,
   onDelete,
 }) => {
   const isOwner = owner?.id === currentUser.id;
   const today = getToday();
-  const tomorrow = getTomorrow();
-  const now = new Date();
-  const isAfter4PM = now.getHours() >= 16;
+  
+  const startOfWeek = new Date(today);
+  startOfWeek.setDate(today.getDate() - today.getDay() + (weekOffset * 7)); // Sunday as start, add offset
 
-  const availabilityForToday = availabilities.find(a => 
-      !a.claimedById &&
-      a.startDate.getTime() <= today.getTime() &&
-      a.endDate.getTime() >= today.getTime()
-  );
+  const weekDays = Array.from({ length: 7 }).map((_, i) => {
+    const day = new Date(startOfWeek);
+    day.setDate(startOfWeek.getDate() + i);
+    return day;
+  });
 
-  const availabilityForTomorrow = availabilities.find(a => 
-      !a.claimedById &&
-      a.startDate.getTime() <= tomorrow.getTime() &&
-      a.endDate.getTime() >= tomorrow.getTime()
-  );
-
-  let claimAction: { availability: Availability; label: string } | null = null;
-
-  if (availabilityForToday) {
-      claimAction = { availability: availabilityForToday, label: 'Claim for Today' };
-  } else if (availabilityForTomorrow && isAfter4PM) {
-      claimAction = { availability: availabilityForTomorrow, label: 'Claim for Tomorrow' };
-  }
-
+  const claimedByCurrentUserAvailability = availabilities.find(a => a.claimedById === currentUser.id);
 
   return (
     <div style={cardStyle}>
@@ -143,44 +178,52 @@ const ParkingSpaceCard: React.FC<ParkingSpaceCardProps> = ({
           </div>
         )}
 
-        <h4 style={{margin: '24px 0 0 0', fontWeight: 700}}>Availability</h4>
-        {availabilities.length > 0 ? (
-          <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {availabilities.map(avail => (
-              <li key={avail.id}>
-                {toYYYYMMDD(avail.startDate)} to {toYYYYMMDD(avail.endDate)}
-                <br />
-                {avail.claimedById ? (
-                  <div style={{ color: '#C8FFD4', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    Claimed by {MOCK_USERS.find(u => u.id === avail.claimedById)?.name || 'another user'}
-                    {avail.claimedById === currentUser.id && (
-                       <button style={{...secondaryButtonStyle, padding: '6px 10px', fontSize: '12px'}} onClick={() => onUnclaim(avail.id)}>Unclaim</button>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ color: 'rgba(255, 255, 255, 0.7)', marginTop: '8px' }}>
-                     Available
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p style={{margin: 0, color: 'rgba(255, 255, 255, 0.7)'}}>No availability set.</p>
-        )}
+        <h4 style={{margin: '24px 0 16px 0', fontWeight: 700}}>This Week's Availability</h4>
+        <div style={weekContainerStyle}>
+            {weekDays.map(day => {
+                const availabilityOnThisDay = availabilities.find(a => 
+                    day.getTime() >= a.startDate.getTime() &&
+                    day.getTime() <= a.endDate.getTime()
+                );
+
+                const isClaimed = !!(availabilityOnThisDay && availabilityOnThisDay.claimedById);
+                const isAvailable = !!(availabilityOnThisDay && !availabilityOnThisDay.claimedById);
+                const isToday = day.getTime() === today.getTime();
+                const isClickable = isAvailable && canClaimSpot;
+
+                const dayStyle: React.CSSProperties = {
+                  ...dayCellStyle,
+                  ...(isClaimed && claimedDayStyle),
+                  ...(isAvailable && availableDayStyle),
+                  ...(isToday && todayHighlightStyle),
+                  ...(isClickable && { cursor: 'pointer' }),
+                };
+
+                return (
+                    <div 
+                      key={day.toISOString()} 
+                      style={dayStyle}
+                      onClick={isClickable && availabilityOnThisDay ? () => onClaimDay(availabilityOnThisDay.id, day) : undefined}
+                    >
+                        <div style={dayNameStyle}>{day.toLocaleDateString('en-US', { weekday: 'short' })[0]}</div>
+                        <div style={dayNumberStyle}>{day.getDate()}</div>
+                    </div>
+                );
+            })}
+        </div>
         
         <div style={{ marginTop: 'auto', paddingTop: '16px' }}>
           {isOwner && (
             <button style={{ ...primaryButtonStyle, backgroundColor: 'rgba(255,255,255,0.9)', width: '100%' }} onClick={() => onMarkAvailable(space)}>
-              Mark as Available
+              Manage Availability
             </button>
           )}
-          {canClaimSpot && claimAction && (
+          {claimedByCurrentUserAvailability && (
               <button 
-                  style={{ ...primaryButtonStyle, backgroundColor: 'rgba(255,255,255,0.9)', width: '100%' }} 
-                  onClick={() => onClaim(claimAction.availability.id)}
+                  style={{...destructiveButtonStyle, width: '100%'}} 
+                  onClick={() => onUnclaim(claimedByCurrentUserAvailability.id)}
               >
-                  {claimAction.label}
+                  Undo Claim
               </button>
           )}
         </div>
