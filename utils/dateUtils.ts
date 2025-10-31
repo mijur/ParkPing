@@ -1,4 +1,3 @@
-
 export const getToday = (): Date => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -10,4 +9,8 @@ export const getTomorrow = (): Date => {
   tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(0, 0, 0, 0);
   return tomorrow;
+};
+
+export const toYYYYMMDD = (date: Date): string => {
+  return date.toISOString().split('T')[0];
 };

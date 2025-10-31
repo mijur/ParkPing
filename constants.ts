@@ -1,8 +1,5 @@
-
 import type { User } from './types';
 import { Role } from './types';
-
-export const TOTAL_SPOTS = 100;
 
 export const MOCK_USERS: User[] = [
   { id: 'user-1', name: 'Alice (Admin)', role: Role.Admin },

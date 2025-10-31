@@ -1,4 +1,3 @@
-
 import React from 'react';
 import type { User } from '../types';
 
@@ -17,16 +16,16 @@ const UserSwitcher: React.FC<UserSwitcherProps> = ({ users, currentUser, onUserC
   };
 
   return (
-    <div className="p-4 bg-white rounded-lg shadow-md flex items-center gap-4">
-      <label htmlFor="user-switcher" className="text-sm font-medium text-gray-700">
-        Viewing as:
-      </label>
-      <select
-        id="user-switcher"
-        value={currentUser.id}
-        onChange={handleChange}
-        className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-      >
+    <div style={{ marginTop: '20px' }}>
+      <label htmlFor="user-switcher" style={{ marginRight: '10px', fontWeight: 500, color: 'rgba(255, 255, 255, 0.9)' }}>Current User: </label>
+      <select id="user-switcher" value={currentUser.id} onChange={handleChange} style={{ 
+        padding: '8px 12px', 
+        borderRadius: '8px', 
+        backgroundColor: 'rgba(0, 0, 0, 0.2)',
+        color: 'white',
+        border: '1px solid rgba(255, 255, 255, 0.5)',
+        fontFamily: "'Poppins', 'Source Serif Pro', sans-serif"
+      }}>
         {users.map(user => (
           <option key={user.id} value={user.id}>
             {user.name}
