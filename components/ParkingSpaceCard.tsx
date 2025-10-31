@@ -1,8 +1,7 @@
 
 import React from 'react';
 import type { User, ParkingSpace, Availability } from '../types';
-import { getToday, getTomorrow, toYYYYMMDD } from '../utils/dateUtils';
-import { MOCK_USERS } from '../constants';
+import { getToday } from '../utils/dateUtils';
 
 interface ParkingSpaceCardProps {
   space: ParkingSpace;
@@ -33,9 +32,8 @@ const cardStyle: React.CSSProperties = {
 
 const backgroundNumberStyle: React.CSSProperties = {
     position: 'absolute',
-    top: '50%',
+    top: '10px',
     right: '24px',
-    transform: 'translateY(-50%)',
     fontSize: '120px',
     fontWeight: 700,
     color: 'rgba(0, 0, 0, 0.2)',
@@ -164,7 +162,7 @@ const ParkingSpaceCard: React.FC<ParkingSpaceCardProps> = ({
     <div style={cardStyle}>
       <div style={backgroundNumberStyle}>{space.id}</div>
       <div style={contentWrapperStyle}>
-        <p style={{margin: 0, fontWeight: 700, fontSize: '22px', color: 'rgba(255, 255, 255, 0.9)'}}>Owner: {owner ? owner.name : 'Unassigned'}</p>
+        <p style={{margin: 0, fontWeight: 700, fontSize: '22px', color: 'rgba(255, 255, 255, 0.9)'}}>{owner ? owner.name : 'Unassigned'}</p>
         {isAdmin && (
           <div style={{ display: 'flex', gap: '10px' }}>
             {owner ? (

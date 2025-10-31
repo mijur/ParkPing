@@ -1,54 +1,34 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc, query, where, writeBatch, getDocs, Timestamp, runTransaction } from 'firebase/firestore';
+import { auth, db } from './firebase';
 
-import React, { useState, useMemo } from 'react';
-import { MOCK_USERS } from './constants';
-import type { User, ParkingSpace, Availability } from './types';
-import UserSwitcher from './components/UserSwitcher';
+import type { User, ParkingSpace, Availability, AvailabilityFirestore } from './types';
 import ParkingSpaceCard from './components/ParkingSpaceCard';
 import AddSpotCard from './components/AddSpotCard';
 import AssignOwnerModal from './components/modals/AssignOwnerModal';
 import MarkAvailableModal from './components/modals/MarkAvailableModal';
 import ConfirmationModal from './components/modals/ConfirmationModal';
 import OwnerView from './components/OwnerView';
-import { getToday, getTomorrow, toYYYYMMDD } from './utils/dateUtils';
+import { getToday, toYYYYMMDD } from './utils/dateUtils';
 import { Role } from './types';
 
-const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[4]); // Default to a user with no spot
-  const [parkingSpaces, setParkingSpaces] = useState<ParkingSpace[]>([
-    { id: 1, ownerId: 'user-1' },
-    { id: 2, ownerId: 'user-2' },
-    { id: 3, ownerId: 'user-3' },
-    { id: 4, ownerId: 'user-4' },
-    { id: 5, ownerId: null },
-  ]);
-  const [availabilities, setAvailabilities] = useState<Availability[]>([
-    {
-      id: 'avail-1',
-      spotId: 2,
-      startDate: getToday(),
-      endDate: getToday(),
-      claimedById: 'user-5',
-    },
-    {
-      id: 'avail-2',
-      spotId: 3,
-      startDate: getTomorrow(),
-      endDate: (() => {
-        const d = getTomorrow();
-        d.setDate(d.getDate() + 3);
-        return d;
-      })(),
-      claimedById: null,
-    },
-    {
-      id: 'avail-3',
-      spotId: 4,
-      startDate: (() => { const d = new Date(); d.setDate(d.getDate() + 8); return d; })(),
-      endDate: (() => { const d = new Date(); d.setDate(d.getDate() + 10); return d; })(),
-      claimedById: null,
-    }
-  ]);
+const fromFirestoreAvailability = (doc: any): Availability => {
+    const data = doc.data() as AvailabilityFirestore;
+    return {
+        id: doc.id,
+        ...data,
+        startDate: data.startDate.toDate(),
+        endDate: data.endDate.toDate(),
+    };
+}
 
+const App: React.FC = () => {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [parkingSpaces, setParkingSpaces] = useState<ParkingSpace[]>([]);
+  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [markAvailableModalOpen, setMarkAvailableModalOpen] = useState(false);
   const [selectedSpot, setSelectedSpot] = useState<ParkingSpace | null>(null);
@@ -62,21 +42,75 @@ const App: React.FC = () => {
   } | null>(null);
   
   const [viewMode, setViewMode] = useState<'default' | 'all'>('default');
-  const [weekOffset, setWeekOffset] = useState(0); // 0 for current week, 1 for next week
+  const [weekOffset, setWeekOffset] = useState(0);
 
-  const isAdmin = currentUser.role === Role.Admin;
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          setCurrentUser({
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName || 'User',
+            role: userDocSnap.data().role as Role,
+          });
+        } else {
+          const newUser = { name: firebaseUser.displayName || 'New User', role: Role.User };
+          await setDoc(userDocRef, newUser);
+          setCurrentUser({ id: firebaseUser.uid, ...newUser });
+        }
+      } else {
+        setCurrentUser(null);
+      }
+      setLoading(false);
+    });
+    
+    const usersUnsub = onSnapshot(collection(db, 'users'), (snapshot) => {
+        setAllUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
+    });
+
+    const spacesUnsub = onSnapshot(collection(db, 'parkingSpaces'), (snapshot) => {
+        const spaces = snapshot.docs.map(doc => ({ ...doc.data() } as ParkingSpace)).sort((a, b) => a.id - b.id);
+        setParkingSpaces(spaces);
+    });
+
+    const availabilitiesUnsub = onSnapshot(collection(db, 'availabilities'), (snapshot) => {
+        setAvailabilities(snapshot.docs.map(fromFirestoreAvailability));
+    });
+
+    return () => {
+      unsubscribeAuth();
+      usersUnsub();
+      spacesUnsub();
+      availabilitiesUnsub();
+    };
+  }, []);
+  
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Error during sign in:", error);
+    }
+  };
+
+  const handleLogout = () => signOut(auth);
+
+  const isAdmin = currentUser?.role === Role.Admin;
   const usersWithoutSpots = useMemo(
-    () => MOCK_USERS.filter(u => !parkingSpaces.some(p => p.ownerId === u.id) && u.role === Role.User),
-    [parkingSpaces]
+    () => allUsers.filter(u => !parkingSpaces.some(p => p.ownerId === u.id) && u.role === Role.User),
+    [allUsers, parkingSpaces]
   );
   
   const ownedSpot = useMemo(
-    () => parkingSpaces.find(p => p.ownerId === currentUser.id),
+    () => currentUser ? parkingSpaces.find(p => p.ownerId === currentUser.id) : undefined,
     [parkingSpaces, currentUser]
   );
 
   const claimedAvailability = useMemo(
-    () => availabilities.find(a => a.claimedById === currentUser.id),
+    () => currentUser ? availabilities.find(a => a.claimedById === currentUser.id) : undefined,
     [availabilities, currentUser]
   );
   const userHasClaimedSpot = !!claimedAvailability;
@@ -95,10 +129,7 @@ const App: React.FC = () => {
     }
 
     if (viewMode === 'default' && !ownedSpot) {
-      if (claimedAvailability) {
-        return parkingSpaces.filter(space => space.id === claimedAvailability.spotId);
-      }
-      return parkingSpaces.filter(space =>
+      const availableThisWeek = parkingSpaces.filter(space =>
         availabilities.some(a =>
           a.spotId === space.id &&
           !a.claimedById &&
@@ -106,6 +137,24 @@ const App: React.FC = () => {
           a.endDate.getTime() >= startOfWeek.getTime()
         )
       );
+      
+      if (claimedAvailability) {
+        const claimedSpot = parkingSpaces.find(space => space.id === claimedAvailability.spotId);
+        
+        let combinedList = [...availableThisWeek];
+        if (claimedSpot && !combinedList.some(s => s.id === claimedSpot.id)) {
+            combinedList.push(claimedSpot);
+        }
+
+        combinedList.sort((a, b) => {
+            if (a.id === claimedAvailability.spotId) return -1;
+            if (b.id === claimedAvailability.spotId) return 1;
+            return a.id - b.id;
+        });
+        
+        return combinedList;
+      }
+      return availableThisWeek;
     }
     
     return parkingSpaces;
@@ -114,8 +163,9 @@ const App: React.FC = () => {
   const handleNextWeek = () => setWeekOffset(prev => Math.min(prev + 1, 1));
   const handlePreviousWeek = () => setWeekOffset(prev => Math.max(prev - 1, 0));
 
-  const handleAddSpot = () => {
-    setParkingSpaces(prev => [...prev, { id: prev.length > 0 ? Math.max(...prev.map(p => p.id)) + 1 : 1, ownerId: null }]);
+  const handleAddSpot = async () => {
+    const newId = parkingSpaces.length > 0 ? Math.max(...parkingSpaces.map(p => p.id)) + 1 : 1;
+    await setDoc(doc(db, "parkingSpaces", String(newId)), { id: newId, ownerId: null });
   };
 
   const handleOpenAssignModal = (spot: ParkingSpace) => {
@@ -123,26 +173,22 @@ const App: React.FC = () => {
     setAssignModalOpen(true);
   };
   
-  const handleAssignOwner = (spotId: number, ownerId: string) => {
-    setParkingSpaces(prev => prev.map(p => p.id === spotId ? { ...p, ownerId } : p));
+  const handleAssignOwner = async (spotId: number, ownerId: string) => {
+    await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId });
     setAssignModalOpen(false);
     setSelectedSpot(null);
-  };
-
-  const handleUnassignOwner = (spotId: number) => {
-    setParkingSpaces(prev => prev.map(p => p.id === spotId ? { ...p, ownerId: null } : p));
   };
   
   const handleRequestUnassign = (spotId: number) => {
     const spot = parkingSpaces.find(p => p.id === spotId);
-    const owner = MOCK_USERS.find(u => u.id === spot?.ownerId);
+    const owner = allUsers.find(u => u.id === spot?.ownerId);
     if (!spot || !owner) return;
 
     setConfirmationAction({
       title: 'Confirm Unassign',
       message: `Are you sure you want to unassign ${owner.name} from Spot #${spot.id}?`,
-      onConfirm: () => {
-        handleUnassignOwner(spotId);
+      onConfirm: async () => {
+        await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId: null });
         setConfirmationModalOpen(false);
       },
       confirmButtonText: 'Unassign',
@@ -156,121 +202,90 @@ const App: React.FC = () => {
     setMarkAvailableModalOpen(true);
   };
   
-  const handleRequestMarkAvailable = (spotId: number, startDate: Date, endDate: Date): { success: boolean, message: string } => {
-    const newStart = new Date(startDate);
-    newStart.setHours(0,0,0,0);
-    const newEnd = new Date(endDate);
-    newEnd.setHours(0,0,0,0);
+  const handleRequestMarkAvailable = async (spotId: number, startDate: Date, endDate: Date): Promise<{ success: boolean, message: string }> => {
+    const newStart = Timestamp.fromDate(startDate);
+    const newEnd = Timestamp.fromDate(endDate);
 
-    const overlappingAvailability = availabilities.find(existing => {
-      if (existing.spotId !== spotId) return false;
-      const existingStart = existing.startDate.getTime();
-      const existingEnd = existing.endDate.getTime();
-      return newStart.getTime() <= existingEnd && newEnd.getTime() >= existingStart;
+    const q = query(collection(db, "availabilities"), where("spotId", "==", spotId));
+    const querySnapshot = await getDocs(q);
+    const overlapping = querySnapshot.docs.find(docSnap => {
+        const d = docSnap.data();
+        return newStart.seconds <= d.endDate.seconds && newEnd.seconds >= d.startDate.seconds;
     });
 
-    const addNewAvailability = () => {
-      setAvailabilities(prev => [...prev, {
-        id: `avail-${Date.now()}`,
-        spotId,
-        startDate: newStart,
-        endDate: newEnd,
-        claimedById: null
-      }]);
-    };
-
-    if (overlappingAvailability) {
-      if (overlappingAvailability.claimedById) {
+    if (overlapping) {
+      if (overlapping.data().claimedById) {
         return { success: false, message: 'This period overlaps with a claimed availability and cannot be changed.' };
       }
-
       setConfirmationAction({
         title: 'Overwrite Availability',
-        message: `Your new availability overlaps with an existing one (${toYYYYMMDD(overlappingAvailability.startDate)} to ${toYYYYMMDD(overlappingAvailability.endDate)}). Do you want to replace it?`,
-        onConfirm: () => {
-          setAvailabilities(prev => {
-            const filtered = prev.filter(a => a.id !== overlappingAvailability.id);
-            return [...filtered, {
-              id: `avail-${Date.now()}`,
-              spotId,
-              startDate: newStart,
-              endDate: newEnd,
-              claimedById: null
-            }];
-          });
+        message: `Your new availability overlaps with an existing one. Do you want to replace it?`,
+        onConfirm: async () => {
+          const batch = writeBatch(db);
+          batch.delete(doc(db, "availabilities", overlapping.id));
+          batch.set(doc(collection(db, "availabilities")), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
+          await batch.commit();
           setConfirmationModalOpen(false);
         },
         confirmButtonText: 'Overwrite',
-        confirmButtonVariant: 'destructive'
       });
       setConfirmationModalOpen(true);
       return { success: true, message: '' };
+    } else {
+        await addDoc(collection(db, "availabilities"), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
+        return { success: true, message: '' };
     }
-
-    addNewAvailability();
-    return { success: true, message: '' };
   };
 
-  const handleClaimDay = (availabilityId: string, dayToClaim: Date) => {
-    if (!canClaimSpot) return;
+  const handleClaimDay = async (availabilityId: string, dayToClaim: Date) => {
+    if (!canClaimSpot || !currentUser) return;
+    try {
+      await runTransaction(db, async (transaction) => {
+        const availDocRef = doc(db, 'availabilities', availabilityId);
+        const availDoc = await transaction.get(availDocRef);
+        if (!availDoc.exists() || availDoc.data().claimedById) {
+          throw new Error("Availability not found or already claimed!");
+        }
 
-    const originalAvailability = availabilities.find(a => a.id === availabilityId);
-    if (!originalAvailability || originalAvailability.claimedById) {
-      console.error("Could not find availability or it's already claimed.");
-      return;
-    }
+        const original = fromFirestoreAvailability(availDoc);
+        dayToClaim.setHours(0, 0, 0, 0);
 
-    dayToClaim.setHours(0, 0, 0, 0);
+        transaction.delete(availDocRef);
 
-    const newAvailabilities: Availability[] = [];
+        const newClaimedRef = doc(collection(db, 'availabilities'));
+        transaction.set(newClaimedRef, {
+          spotId: original.spotId,
+          startDate: Timestamp.fromDate(dayToClaim),
+          endDate: Timestamp.fromDate(dayToClaim),
+          claimedById: currentUser.id
+        });
 
-    const claimedAvailability: Availability = {
-      id: `avail-${Date.now()}`,
-      spotId: originalAvailability.spotId,
-      startDate: dayToClaim,
-      endDate: dayToClaim,
-      claimedById: currentUser.id,
-    };
-    newAvailabilities.push(claimedAvailability);
-
-    const originalStart = originalAvailability.startDate.getTime();
-    const originalEnd = originalAvailability.endDate.getTime();
-    const claimTime = dayToClaim.getTime();
-
-    if (claimTime > originalStart) {
-      const beforeEndDate = new Date(dayToClaim);
-      beforeEndDate.setDate(dayToClaim.getDate() - 1);
-      
-      newAvailabilities.push({
-        id: `avail-${Date.now()}-before`,
-        spotId: originalAvailability.spotId,
-        startDate: originalAvailability.startDate,
-        endDate: beforeEndDate,
-        claimedById: null,
+        if (dayToClaim.getTime() > original.startDate.getTime()) {
+            const beforeEndDate = new Date(dayToClaim);
+            beforeEndDate.setDate(dayToClaim.getDate() - 1);
+            const beforeRef = doc(collection(db, 'availabilities'));
+            transaction.set(beforeRef, {
+                spotId: original.spotId,
+                startDate: Timestamp.fromDate(original.startDate),
+                endDate: Timestamp.fromDate(beforeEndDate),
+                claimedById: null
+            });
+        }
+        if (dayToClaim.getTime() < original.endDate.getTime()) {
+            const afterStartDate = new Date(dayToClaim);
+            afterStartDate.setDate(dayToClaim.getDate() + 1);
+            const afterRef = doc(collection(db, 'availabilities'));
+            transaction.set(afterRef, {
+                spotId: original.spotId,
+                startDate: Timestamp.fromDate(afterStartDate),
+                endDate: Timestamp.fromDate(original.endDate),
+                claimedById: null
+            });
+        }
       });
+    } catch (e) {
+      console.error("Transaction failed: ", e);
     }
-
-    if (claimTime < originalEnd) {
-      const afterStartDate = new Date(dayToClaim);
-      afterStartDate.setDate(dayToClaim.getDate() + 1);
-
-      newAvailabilities.push({
-        id: `avail-${Date.now()}-after`,
-        spotId: originalAvailability.spotId,
-        startDate: afterStartDate,
-        endDate: originalAvailability.endDate,
-        claimedById: null,
-      });
-    }
-
-    setAvailabilities(prev => [
-      ...prev.filter(a => a.id !== originalAvailability.id),
-      ...newAvailabilities,
-    ]);
-  };
-  
-  const handleUnclaimSpot = (availabilityId: string) => {
-    setAvailabilities(prev => prev.map(a => a.id === availabilityId ? { ...a, claimedById: null } : a));
   };
   
   const handleRequestUnclaim = (availabilityId: string) => {
@@ -279,9 +294,9 @@ const App: React.FC = () => {
 
       setConfirmationAction({
           title: 'Confirm Unclaim',
-          message: `Are you sure you want to unclaim your spot for ${availability.startDate.toLocaleDateString()}? This will make it available for others.`,
-          onConfirm: () => {
-              handleUnclaimSpot(availabilityId);
+          message: `Are you sure you want to unclaim your spot for ${availability.startDate.toLocaleDateString()}?`,
+          onConfirm: async () => {
+              await updateDoc(doc(db, "availabilities", availabilityId), { claimedById: null });
               setConfirmationModalOpen(false);
           },
           confirmButtonText: 'Yes, Unclaim',
@@ -290,19 +305,15 @@ const App: React.FC = () => {
       setConfirmationModalOpen(true);
   }
   
-  const handleUndoAvailability = (availabilityId: string) => {
-    setAvailabilities(prev => prev.filter(a => a.id !== availabilityId));
-  };
-
   const handleRequestUndoAvailability = (availabilityId: string) => {
     const availability = availabilities.find(a => a.id === availabilityId);
     if (!availability) return;
 
     setConfirmationAction({
         title: 'Confirm Undo Availability',
-        message: `Are you sure you want to remove the availability for Spot #${availability.spotId} from ${availability.startDate.toLocaleDateString()} to ${availability.endDate.toLocaleDateString()}?`,
-        onConfirm: () => {
-            handleUndoAvailability(availabilityId);
+        message: `Are you sure you want to remove this availability?`,
+        onConfirm: async () => {
+            await deleteDoc(doc(db, "availabilities", availabilityId));
             setConfirmationModalOpen(false);
         },
         confirmButtonText: 'Yes, Undo',
@@ -311,20 +322,17 @@ const App: React.FC = () => {
     setConfirmationModalOpen(true);
   }
 
-  const handleDeleteSpot = (spotId: number) => {
-    setParkingSpaces(prev => prev.filter(p => p.id !== spotId));
-    setAvailabilities(prev => prev.filter(a => a.spotId !== spotId));
-  };
-  
   const handleRequestDelete = (spotId: number) => {
-    const spot = parkingSpaces.find(p => p.id === spotId);
-    if (!spot) return;
-  
     setConfirmationAction({
       title: 'Confirm Deletion',
-      message: `Are you sure you want to permanently delete Spot #${spot.id}? This action cannot be undone.`,
-      onConfirm: () => {
-        handleDeleteSpot(spotId);
+      message: `Are you sure you want to permanently delete Spot #${spotId}?`,
+      onConfirm: async () => {
+        const batch = writeBatch(db);
+        batch.delete(doc(db, "parkingSpaces", String(spotId)));
+        const availsQuery = query(collection(db, "availabilities"), where("spotId", "==", spotId));
+        const availsToDelete = await getDocs(availsQuery);
+        availsToDelete.forEach(d => batch.delete(d.ref));
+        await batch.commit();
         setConfirmationModalOpen(false);
       },
       confirmButtonText: 'Delete Spot',
@@ -334,144 +342,81 @@ const App: React.FC = () => {
   };
   
   const bannerStyle: React.CSSProperties = {
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    padding: '20px',
-    borderRadius: '16px',
-    marginBottom: '20px',
-    textAlign: 'center',
-    border: '1px solid rgba(255, 255, 255, 0.2)'
+    backgroundColor: 'rgba(0, 0, 0, 0.2)', padding: '20px', borderRadius: '16px', marginBottom: '20px', textAlign: 'center', border: '1px solid rgba(255, 255, 255, 0.2)'
   };
-
-  const viewControlsStyle: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '24px',
-  };
-
-  const viewTitleStyle: React.CSSProperties = {
-    margin: 0,
-    fontWeight: 700,
-    fontSize: '24px',
-  };
-
-  const toggleButtonStyle: React.CSSProperties = {
-    padding: '8px 16px',
-    border: '1px solid white',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    backgroundColor: 'transparent',
-    color: 'white',
-    fontFamily: "'Poppins', 'Source Serif Pro', sans-serif",
-    fontWeight: 500,
-  };
-
-  const weekButtonStyle: React.CSSProperties = {
-    padding: '8px 12px',
-    border: '1px solid white',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    backgroundColor: 'transparent',
-    color: 'white',
-    fontFamily: "'Poppins', 'Source Serif Pro', sans-serif",
-    fontWeight: 700,
-    fontSize: '16px',
-  };
-
-  const disabledButtonStyle: React.CSSProperties = {
-    opacity: 0.5,
-    cursor: 'not-allowed',
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    color: 'rgba(255, 255, 255, 0.5)',
-  };
+  const viewControlsStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' };
+  const viewTitleStyle: React.CSSProperties = { margin: 0, fontWeight: 700, fontSize: '24px' };
+  const toggleButtonStyle: React.CSSProperties = { padding: '8px 16px', border: '1px solid white', borderRadius: '8px', cursor: 'pointer', backgroundColor: 'transparent', color: 'white', fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", fontWeight: 500 };
+  const weekButtonStyle: React.CSSProperties = { padding: '8px 12px', border: '1px solid white', borderRadius: '8px', cursor: 'pointer', backgroundColor: 'transparent', color: 'white', fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", fontWeight: 700, fontSize: '16px' };
+  const disabledButtonStyle: React.CSSProperties = { opacity: 0.5, cursor: 'not-allowed', borderColor: 'rgba(255, 255, 255, 0.5)', color: 'rgba(255, 255, 255, 0.5)' };
+  const loginButtonStyle: React.CSSProperties = { padding: '12px 24px', border: 'none', borderRadius: '12px', cursor: 'pointer', backgroundColor: 'white', color: '#5A48E5', fontWeight: 700, fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", fontSize: '18px' };
   
   const getViewConfig = () => {
     if (isAdmin) {
-      return viewMode === 'default'
-        ? { title: 'Owned Spots', buttonText: 'Show All Spots' }
-        : { title: 'All Spots', buttonText: 'Show Owned Only' };
+      return viewMode === 'default' ? { title: 'Owned Spots', buttonText: 'Show All Spots' } : { title: 'All Spots', buttonText: 'Show Owned Only' };
     }
     if (viewMode === 'default') {
-      if (claimedAvailability) {
-        return { title: 'Your Claimed Spot', buttonText: 'Show All Spots' };
-      }
       const weekTitle = weekOffset === 0 ? 'This Week' : 'Next Week';
       return { title: `Available ${weekTitle}`, buttonText: 'Show All Spots' };
     }
-    // 'all' view for non-admin
-    const buttonText = claimedAvailability ? 'Show My Claimed Spot' : 'Show Available This Week';
+    const buttonText = claimedAvailability ? 'Show Available Spots' : 'Show Available This Week';
     return { title: 'All Spots', buttonText };
   };
 
   const { title, buttonText } = getViewConfig();
-
-
   const getEmptyStateMessage = () => {
     if (isAdmin) {
       return viewMode === 'default' ? 'No spots are currently assigned to users.' : 'There are no spots in the system. Add one!';
-    }
-    if (claimedAvailability) {
-        return 'Could not find your claimed spot.';
     }
     const weekText = weekOffset === 0 ? 'this week' : 'next week';
     return viewMode === 'default' ? `No parking spots are available ${weekText}. Please check back later.` : 'There are no spots in the system.';
   }
 
+  if (loading) {
+    return <div style={{ fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", padding: '40px', backgroundColor: '#5A48E5', minHeight: '100vh', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' }}>Loading...</div>;
+  }
+
   return (
     <div style={{ fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", padding: '40px', backgroundColor: '#5A48E5', minHeight: '100vh', color: 'white' }}>
-      <header style={{ marginBottom: '40px' }}>
-        <h1 style={{ fontSize: '48px', fontWeight: 700, margin: 0 }}>ParkPing</h1>
-        <UserSwitcher
-          users={MOCK_USERS}
-          currentUser={currentUser}
-          onUserChange={(user) => {
-            setCurrentUser(user);
-            setViewMode('default');
-            setWeekOffset(0);
-          }}
-        />
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+        <h1 style={{ fontSize: '48px', fontWeight: 700, margin: 0 }}>SpyroPark</h1>
+        {currentUser ? (
+          <div style={{textAlign: 'right'}}>
+            <p style={{margin: '0 0 8px 0'}}>Welcome, {currentUser.name}</p>
+            <button onClick={handleLogout} style={{...toggleButtonStyle, borderColor: '#FFB8B8', color: '#FFB8B8'}}>Logout</button>
+          </div>
+        ) : (
+          <button onClick={handleLogin} style={loginButtonStyle}>Sign in with Google</button>
+        )}
       </header>
 
-      {ownedSpot && !isAdmin ? (
+      {!currentUser ? (
+        <div style={bannerStyle}>Please sign in to manage and claim parking spots.</div>
+      ) : ownedSpot && !isAdmin ? (
         <OwnerView
           spot={ownedSpot}
+          users={allUsers}
           availabilities={availabilities.filter(a => a.spotId === ownedSpot.id)}
           onRequestMarkAvailable={(startDate, endDate) => handleRequestMarkAvailable(ownedSpot.id, startDate, endDate)}
           onUndoAvailability={handleRequestUndoAvailability}
         />
       ) : (
         <>
-          {userHasClaimedSpot && !isAdmin && viewMode === 'all' && (
-             <div style={bannerStyle}>
-               You have already claimed a spot. You can only claim one spot at a time.
-             </div>
+          {userHasClaimedSpot && !isAdmin && (
+             <div style={bannerStyle}>You have already claimed a spot. You can only claim one spot at a time.</div>
           )}
           <main>
             <div style={viewControlsStyle}>
                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                 <h2 style={viewTitleStyle}>{title}</h2>
-                 {viewMode === 'default' && !ownedSpot && !isAdmin && !claimedAvailability && (
+                 {viewMode === 'default' && !ownedSpot && !isAdmin && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <button
-                        style={{ ...weekButtonStyle, ...(weekOffset === 0 && disabledButtonStyle) }}
-                        disabled={weekOffset === 0}
-                        onClick={handlePreviousWeek}
-                    >
-                        &lt; Prev
-                    </button>
-                    <button
-                        style={{ ...weekButtonStyle, ...(weekOffset === 1 && disabledButtonStyle) }}
-                        disabled={weekOffset === 1}
-                        onClick={handleNextWeek}
-                    >
-                        Next &gt;
-                    </button>
+                    <button style={{ ...weekButtonStyle, ...(weekOffset === 0 && disabledButtonStyle) }} disabled={weekOffset === 0} onClick={handlePreviousWeek}>&lt; Prev</button>
+                    <button style={{ ...weekButtonStyle, ...(weekOffset === 1 && disabledButtonStyle) }} disabled={weekOffset === 1} onClick={handleNextWeek}>Next &gt;</button>
                   </div>
                 )}
               </div>
-              <button style={toggleButtonStyle} onClick={() => setViewMode(prev => prev === 'default' ? 'all' : 'default')}>
-                 {buttonText}
-              </button>
+              <button style={toggleButtonStyle} onClick={() => setViewMode(prev => prev === 'default' ? 'all' : 'default')}>{buttonText}</button>
             </div>
             
             {displayedSpaces.length > 0 ? (
@@ -480,7 +425,7 @@ const App: React.FC = () => {
                   <ParkingSpaceCard
                     key={space.id}
                     space={space}
-                    owner={MOCK_USERS.find(u => u.id === space.ownerId)}
+                    owner={allUsers.find(u => u.id === space.ownerId)}
                     availabilities={availabilities.filter(a => a.spotId === space.id)}
                     currentUser={currentUser}
                     isAdmin={isAdmin}
@@ -517,8 +462,8 @@ const App: React.FC = () => {
       {markAvailableModalOpen && selectedSpot && (
         <MarkAvailableModal
           spot={selectedSpot}
-          onRequestMarkAvailable={(spotId, startDate, endDate) => {
-              const result = handleRequestMarkAvailable(spotId, startDate, endDate);
+          onRequestMarkAvailable={async (spotId, startDate, endDate) => {
+              const result = await handleRequestMarkAvailable(spotId, startDate, endDate);
               if (result.success) {
                 setMarkAvailableModalOpen(false);
                 setSelectedSpot(null);

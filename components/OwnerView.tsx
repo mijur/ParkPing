@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import type { ParkingSpace, Availability } from '../types';
-import { MOCK_USERS } from '../constants';
+import type { ParkingSpace, Availability, User } from '../types';
 import { toYYYYMMDD, getToday, getTomorrow, parseYYYYMMDD } from '../utils/dateUtils';
 
 interface OwnerViewProps {
   spot: ParkingSpace;
   availabilities: Availability[];
-  onRequestMarkAvailable: (startDate: Date, endDate: Date) => { success: boolean; message: string };
+  users: User[];
+  onRequestMarkAvailable: (startDate: Date, endDate: Date) => Promise<{ success: boolean; message: string }>;
   onUndoAvailability: (availabilityId: string) => void;
 }
 
@@ -117,6 +117,7 @@ const inputStyle: React.CSSProperties = {
 const OwnerView: React.FC<OwnerViewProps> = ({
   spot,
   availabilities,
+  users,
   onRequestMarkAvailable,
   onUndoAvailability,
 }) => {
@@ -132,7 +133,7 @@ const OwnerView: React.FC<OwnerViewProps> = ({
     }
   };
 
-  const handleConfirmAvailability = () => {
+  const handleConfirmAvailability = async () => {
     const start = parseYYYYMMDD(startDate);
     const end = parseYYYYMMDD(endDate);
     
@@ -141,7 +142,7 @@ const OwnerView: React.FC<OwnerViewProps> = ({
       return;
     }
 
-    const result = onRequestMarkAvailable(start, end);
+    const result = await onRequestMarkAvailable(start, end);
 
     if (result.success) {
       setError('');
@@ -168,7 +169,7 @@ const OwnerView: React.FC<OwnerViewProps> = ({
           {availabilities.length > 0 ? (
             <ul style={dynamicListStyle}>
               {availabilities.slice().sort((a,b) => a.startDate.getTime() - b.startDate.getTime()).map(avail => {
-                const claimedByUser = MOCK_USERS.find(u => u.id === avail.claimedById);
+                const claimedByUser = users.find(u => u.id === avail.claimedById);
                 return (
                   <li key={avail.id} style={{...listItemStyle, marginRight: availabilities.length > 3 ? '-10px' : '0' }}>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>

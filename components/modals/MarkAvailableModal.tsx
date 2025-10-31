@@ -4,7 +4,8 @@ import { getToday, getTomorrow, toYYYYMMDD, parseYYYYMMDD } from '../../utils/da
 
 interface MarkAvailableModalProps {
   spot: ParkingSpace;
-  onRequestMarkAvailable: (spotId: number, startDate: Date, endDate: Date) => { success: boolean; message: string };
+  // FIX: Update prop to accept a Promise, resolving the type mismatch from App.tsx.
+  onRequestMarkAvailable: (spotId: number, startDate: Date, endDate: Date) => Promise<{ success: boolean; message: string }>;
   onClose: () => void;
 }
 
@@ -88,7 +89,8 @@ const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onRequest
     }
   };
 
-  const handleMarkAvailable = () => {
+  // FIX: Make handler async and await the promise from onRequestMarkAvailable.
+  const handleMarkAvailable = async () => {
     const start = parseYYYYMMDD(startDate);
     const end = parseYYYYMMDD(endDate);
     if (start > end) {
@@ -96,7 +98,7 @@ const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onRequest
       return;
     }
     setError('');
-    const result = onRequestMarkAvailable(spot.id, start, end);
+    const result = await onRequestMarkAvailable(spot.id, start, end);
     if (!result.success) {
       setError(result.message);
     }

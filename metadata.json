@@ -1,5 +1,5 @@
 {
-  "name": "ParkPing",
+  "name": "SpyroPark",
   "description": "An application for managing and sharing assigned business parking spaces. Employees who own a spot can mark it as available, and other employees can browse and claim available spots for the day.",
   "requestFramePermissions": []
 }
