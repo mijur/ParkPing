@@ -1,9 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile } from 'firebase/auth';
-import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc, query, where, writeBatch, getDocs, Timestamp, runTransaction } from 'firebase/firestore';
-import { auth, db } from './firebase';
-
-import type { User, ParkingSpace, Availability, AvailabilityFirestore } from './types';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import type { User, ParkingSpace, Availability } from './types';
 import ParkingSpaceCard from './components/ParkingSpaceCard';
 import AddSpotCard from './components/AddSpotCard';
 import AssignOwnerModal from './components/modals/AssignOwnerModal';
@@ -14,22 +10,153 @@ import LoginView from './components/LoginView';
 import { getToday } from './utils/dateUtils';
 import { Role } from './types';
 
-const fromFirestoreAvailability = (doc: any): Availability => {
-    const data = doc.data() as AvailabilityFirestore;
-    return {
-        id: doc.id,
-        ...data,
-        startDate: data.startDate.toDate(),
-        endDate: data.endDate.toDate(),
-    };
+type UserRecord = User & { email: string; password: string };
+
+interface PersistedData {
+  users: UserRecord[];
+  parkingSpaces: ParkingSpace[];
+  availabilities: Availability[];
+  currentUserId: string | null;
 }
 
+const STORAGE_KEY = 'parkping-data';
+
+const generateId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `id-${Math.random().toString(16).slice(2)}-${Date.now()}`;
+
+const normalizeDate = (value: Date): Date => {
+  const normalized = new Date(value);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+};
+
+const addDays = (value: Date, amount: number): Date => {
+  const updated = new Date(value);
+  updated.setDate(updated.getDate() + amount);
+  updated.setHours(0, 0, 0, 0);
+  return updated;
+};
+
+const sortAvailabilities = (entries: Availability[]): Availability[] =>
+  [...entries].sort((a, b) => {
+    const startDiff = a.startDate.getTime() - b.startDate.getTime();
+    if (startDiff !== 0) return startDiff;
+    if (a.spotId !== b.spotId) return a.spotId - b.spotId;
+    const endDiff = a.endDate.getTime() - b.endDate.getTime();
+    if (endDiff !== 0) return endDiff;
+    return a.id.localeCompare(b.id);
+  });
+
+const clonePersistedData = (data: PersistedData): PersistedData => ({
+  users: data.users.map(user => ({ ...user })),
+  parkingSpaces: data.parkingSpaces.map(space => ({ ...space })),
+  availabilities: data.availabilities.map(avail => ({
+    ...avail,
+    startDate: normalizeDate(avail.startDate),
+    endDate: normalizeDate(avail.endDate),
+  })),
+  currentUserId: data.currentUserId,
+});
+
+const DEFAULT_DATA: PersistedData = {
+  users: [
+    {
+      id: 'admin',
+      name: 'Admin',
+      role: Role.Admin,
+      email: 'admin@parkping.local',
+      password: 'admin123',
+    },
+  ],
+  parkingSpaces: [
+    { id: 1, ownerId: null },
+    { id: 2, ownerId: null },
+    { id: 3, ownerId: null },
+  ],
+  availabilities: [],
+  currentUserId: null,
+};
+
+const sanitizeUserRecord = (entry: any): UserRecord => ({
+  id: typeof entry?.id === 'string' ? entry.id : generateId(),
+  name: typeof entry?.name === 'string' ? entry.name : 'User',
+  role: entry?.role === Role.Admin ? Role.Admin : Role.User,
+  email: typeof entry?.email === 'string' ? entry.email : '',
+  password: typeof entry?.password === 'string' ? entry.password : '',
+});
+
+const sanitizeParkingSpace = (entry: any): ParkingSpace => {
+  const numericId = Number(entry?.id);
+  return {
+    id: Number.isFinite(numericId) && numericId > 0 ? numericId : 0,
+    ownerId: typeof entry?.ownerId === 'string' ? entry.ownerId : null,
+  };
+};
+
+const sanitizeAvailability = (entry: any): Availability => {
+  const spotId = Number(entry?.spotId);
+  const start = entry?.startDate ? normalizeDate(new Date(entry.startDate)) : normalizeDate(new Date());
+  const endCandidate = entry?.endDate ? normalizeDate(new Date(entry.endDate)) : start;
+  const end = endCandidate.getTime() < start.getTime() ? start : endCandidate;
+  return {
+    id: typeof entry?.id === 'string' ? entry.id : generateId(),
+    spotId: Number.isFinite(spotId) ? spotId : 0,
+    startDate: start,
+    endDate: end,
+    claimedById: typeof entry?.claimedById === 'string' ? entry.claimedById : null,
+  };
+};
+
+const loadPersistedData = (): PersistedData => {
+  const fallback = clonePersistedData(DEFAULT_DATA);
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = JSON.parse(raw);
+    const users = Array.isArray(parsed?.users)
+      ? parsed.users.map(sanitizeUserRecord)
+      : fallback.users;
+    const spaces = Array.isArray(parsed?.parkingSpaces)
+      ? parsed.parkingSpaces.map(sanitizeParkingSpace).filter(space => space.id > 0)
+      : fallback.parkingSpaces;
+    const availabilities = Array.isArray(parsed?.availabilities)
+      ? sortAvailabilities(parsed.availabilities.map(sanitizeAvailability).filter(av => av.spotId > 0))
+      : fallback.availabilities;
+    const userIds = new Set(users.map(user => user.id));
+    const currentUserId = typeof parsed?.currentUserId === 'string' && userIds.has(parsed.currentUserId)
+      ? parsed.currentUserId
+      : null;
+
+    return {
+      users,
+      parkingSpaces: spaces,
+      availabilities,
+      currentUserId,
+    };
+  } catch {
+    return fallback;
+  }
+};
+
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const initialDataRef = useRef<PersistedData | null>(null);
+  if (!initialDataRef.current) {
+    initialDataRef.current = loadPersistedData();
+  }
+
+  const [userRecords, setUserRecords] = useState<UserRecord[]>(() => initialDataRef.current!.users);
+  const [parkingSpaces, setParkingSpaces] = useState<ParkingSpace[]>(() => initialDataRef.current!.parkingSpaces);
+  const [availabilities, setAvailabilities] = useState<Availability[]>(() => sortAvailabilities(initialDataRef.current!.availabilities));
+  const [currentUserId, setCurrentUserId] = useState<string | null>(() => initialDataRef.current!.currentUserId);
   const [loading, setLoading] = useState(true);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [parkingSpaces, setParkingSpaces] = useState<ParkingSpace[]>([]);
-  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [markAvailableModalOpen, setMarkAvailableModalOpen] = useState(false);
   const [selectedSpot, setSelectedSpot] = useState<ParkingSpace | null>(null);
@@ -46,87 +173,73 @@ const App: React.FC = () => {
   const [weekOffset, setWeekOffset] = useState(0);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      try {
-        if (firebaseUser) {
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDocSnap = await getDoc(userDocRef);
-          if (userDocSnap.exists()) {
-            setCurrentUser({
-              id: firebaseUser.uid,
-              name: firebaseUser.displayName || 'User',
-              role: userDocSnap.data().role as Role,
-            });
-          } else {
-            // This case handles user creation during sign-up
-            const newUser = { name: firebaseUser.displayName || 'New User', role: Role.User };
-            await setDoc(userDocRef, newUser);
-            setCurrentUser({ id: firebaseUser.uid, ...newUser });
-          }
-        } else {
-          setCurrentUser(null);
-        }
-      } catch (e: any) {
-        console.error("Error during auth state change:", e.message || e);
-        setCurrentUser(null);
-      } finally {
-        setLoading(false);
-      }
-    });
-    
-    const usersUnsub = onSnapshot(collection(db, 'users'), (snapshot) => {
-        setAllUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
-    }, (error) => {
-        console.error("Error fetching users:", error.message || error);
-    });
+    if (loading) {
+      setLoading(false);
+    }
+  }, [loading]);
 
-    const spacesUnsub = onSnapshot(collection(db, 'parkingSpaces'), (snapshot) => {
-        const spaces = snapshot.docs.map(doc => ({ ...doc.data() } as ParkingSpace)).sort((a, b) => a.id - b.id);
-        setParkingSpaces(spaces);
-    }, (error) => {
-        console.error("Error fetching parking spaces:", error.message || error);
-    });
-
-    const availabilitiesUnsub = onSnapshot(collection(db, 'availabilities'), (snapshot) => {
-        setAvailabilities(snapshot.docs.map(fromFirestoreAvailability));
-    }, (error) => {
-        console.error("Error fetching availabilities:", error.message || error);
-    });
-
-    return () => {
-      unsubscribeAuth();
-      usersUnsub();
-      spacesUnsub();
-      availabilitiesUnsub();
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const payload: PersistedData = {
+      users: userRecords,
+      parkingSpaces,
+      availabilities,
+      currentUserId,
     };
-  }, []);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }, [userRecords, parkingSpaces, availabilities, currentUserId]);
+
+  const users: User[] = useMemo(
+    () => userRecords.map(({ email, password, ...rest }) => ({ ...rest })),
+    [userRecords]
+  );
+
+  const currentUser = useMemo(
+    () => (currentUserId ? users.find(user => user.id === currentUserId) ?? null : null),
+    [users, currentUserId]
+  );
   
-  const handleEmailLogin = async (email: string, password: string): Promise<{ success: boolean; message: string }> => {
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      return { success: true, message: '' };
-    } catch (error: any) {
-      return { success: false, message: error.message || 'Failed to login.' };
-    }
-  };
+  const handleEmailLogin = useCallback(async (email: string, password: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const match = userRecords.find(
+      user => user.email.toLowerCase() === normalizedEmail && user.password === password
+    );
 
-  const handleEmailSignUp = async (email: string, password: string, name: string): Promise<{ success: boolean; message: string }> => {
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(userCredential.user, { displayName: name });
-      // The onAuthStateChanged listener will handle creating the user document in Firestore.
-      return { success: true, message: '' };
-    } catch (error: any) {
-      return { success: false, message: error.message || 'Failed to sign up.' };
+    if (!match) {
+      return { success: false, message: 'Invalid email or password.' };
     }
-  };
 
-  const handleLogout = () => signOut(auth);
+    setCurrentUserId(match.id);
+    return { success: true, message: '' };
+  }, [userRecords]);
+
+  const handleEmailSignUp = useCallback(async (email: string, password: string, name: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (userRecords.some(user => user.email.toLowerCase() === normalizedEmail)) {
+      return { success: false, message: 'An account with this email already exists.' };
+    }
+
+    const newUser: UserRecord = {
+      id: generateId(),
+      name: name.trim() || 'New User',
+      role: userRecords.length === 0 ? Role.Admin : Role.User,
+      email: normalizedEmail,
+      password,
+    };
+
+    setUserRecords(prev => [...prev, newUser]);
+    setCurrentUserId(newUser.id);
+    return { success: true, message: '' };
+  }, [userRecords]);
+
+  const handleLogout = () => setCurrentUserId(null);
 
   const isAdmin = currentUser?.role === Role.Admin;
   const usersWithoutSpots = useMemo(
-    () => allUsers.filter(u => !parkingSpaces.some(p => p.ownerId === u.id) && u.role === Role.User),
-    [allUsers, parkingSpaces]
+    () => users.filter(u => !parkingSpaces.some(p => p.ownerId === u.id) && u.role === Role.User),
+    [users, parkingSpaces]
   );
   
   const ownedSpot = useMemo(
@@ -189,12 +302,10 @@ const App: React.FC = () => {
   const handlePreviousWeek = () => setWeekOffset(prev => Math.max(prev - 1, 0));
 
   const handleAddSpot = async () => {
-    try {
-      const newId = parkingSpaces.length > 0 ? Math.max(...parkingSpaces.map(p => p.id)) + 1 : 1;
-      await setDoc(doc(db, "parkingSpaces", String(newId)), { id: newId, ownerId: null });
-    } catch (e: any) {
-      console.error("Error adding spot:", e.message || e);
-    }
+    setParkingSpaces(prev => {
+      const nextId = prev.length > 0 ? Math.max(...prev.map(space => space.id)) + 1 : 1;
+      return [...prev, { id: nextId, ownerId: null }];
+    });
   };
 
   const handleOpenAssignModal = (spot: ParkingSpace) => {
@@ -203,32 +314,22 @@ const App: React.FC = () => {
   };
   
   const handleAssignOwner = async (spotId: number, ownerId: string) => {
-    try {
-      await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId });
-    } catch (e: any) {
-      console.error("Error assigning owner:", e.message || e);
-    } finally {
-      setAssignModalOpen(false);
-      setSelectedSpot(null);
-    }
+    setParkingSpaces(prev => prev.map(space => (space.id === spotId ? { ...space, ownerId } : space)));
+    setAssignModalOpen(false);
+    setSelectedSpot(null);
   };
   
   const handleRequestUnassign = (spotId: number) => {
     const spot = parkingSpaces.find(p => p.id === spotId);
-    const owner = allUsers.find(u => u.id === spot?.ownerId);
+    const owner = users.find(u => u.id === spot?.ownerId);
     if (!spot || !owner) return;
 
     setConfirmationAction({
       title: 'Confirm Unassign',
       message: `Are you sure you want to unassign ${owner.name} from Spot #${spot.id}?`,
       onConfirm: async () => {
-        try {
-          await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId: null });
-        } catch(e: any) {
-          console.error("Error unassigning owner:", e.message || e);
-        } finally {
-          setConfirmationModalOpen(false);
-        }
+        setParkingSpaces(prev => prev.map(space => (space.id === spotId ? { ...space, ownerId: null } : space)));
+        setConfirmationModalOpen(false);
       },
       confirmButtonText: 'Unassign',
       confirmButtonVariant: 'destructive'
@@ -241,100 +342,112 @@ const App: React.FC = () => {
     setMarkAvailableModalOpen(true);
   };
   
-  const handleRequestMarkAvailable = async (spotId: number, startDate: Date, endDate: Date): Promise<{ success: boolean, message: string }> => {
-    try {
-      const newStart = Timestamp.fromDate(startDate);
-      const newEnd = Timestamp.fromDate(endDate);
+  const handleRequestMarkAvailable = async (spotId: number, startDate: Date, endDate: Date): Promise<{ success: boolean; message: string }> => {
+    const normalizedStart = normalizeDate(startDate);
+    const normalizedEnd = normalizeDate(endDate);
 
-      const q = query(collection(db, "availabilities"), where("spotId", "==", spotId));
-      const querySnapshot = await getDocs(q);
-      const overlapping = querySnapshot.docs.find(docSnap => {
-          const d = docSnap.data();
-          return newStart.seconds <= d.endDate.seconds && newEnd.seconds >= d.startDate.seconds;
-      });
+    const overlapping = availabilities.find(avail =>
+      avail.spotId === spotId &&
+      normalizedStart.getTime() <= avail.endDate.getTime() &&
+      normalizedEnd.getTime() >= avail.startDate.getTime()
+    );
 
-      if (overlapping) {
-        if (overlapping.data().claimedById) {
-          return { success: false, message: 'This period overlaps with a claimed availability and cannot be changed.' };
-        }
-        setConfirmationAction({
-          title: 'Overwrite Availability',
-          message: `Your new availability overlaps with an existing one. Do you want to replace it?`,
-          onConfirm: async () => {
-            try {
-              const batch = writeBatch(db);
-              batch.delete(doc(db, "availabilities", overlapping.id));
-              batch.set(doc(collection(db, "availabilities")), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
-              await batch.commit();
-            } catch (e: any) {
-              console.error("Error overwriting availability:", e.message || e);
-            } finally {
-              setConfirmationModalOpen(false);
-            }
-          },
-          confirmButtonText: 'Overwrite',
-        });
-        setConfirmationModalOpen(true);
-        return { success: true, message: '' };
-      } else {
-          await addDoc(collection(db, "availabilities"), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
-          return { success: true, message: '' };
+    if (overlapping) {
+      if (overlapping.claimedById) {
+        return { success: false, message: 'This period overlaps with a claimed availability and cannot be changed.' };
       }
-    } catch (e: any) {
-      console.error("Error marking available:", e.message || e);
-      return { success: false, message: 'An unexpected error occurred. Please try again.' };
+
+      setConfirmationAction({
+        title: 'Overwrite Availability',
+        message: 'Your new availability overlaps with an existing one. Do you want to replace it?',
+        onConfirm: () => {
+          setAvailabilities(prev => {
+            const filtered = prev.filter(entry => entry.id !== overlapping.id);
+            const updated = [
+              ...filtered,
+              {
+                id: generateId(),
+                spotId,
+                startDate: normalizedStart,
+                endDate: normalizedEnd,
+                claimedById: null,
+              },
+            ];
+            return sortAvailabilities(updated);
+          });
+          setConfirmationModalOpen(false);
+        },
+        confirmButtonText: 'Overwrite',
+      });
+      setConfirmationModalOpen(true);
+      return { success: true, message: '' };
     }
+
+    setAvailabilities(prev =>
+      sortAvailabilities([
+        ...prev,
+        {
+          id: generateId(),
+          spotId,
+          startDate: normalizedStart,
+          endDate: normalizedEnd,
+          claimedById: null,
+        },
+      ])
+    );
+    return { success: true, message: '' };
   };
 
   const handleClaimDay = async (availabilityId: string, dayToClaim: Date) => {
     if (!canClaimSpot || !currentUser) return;
-    try {
-      await runTransaction(db, async (transaction) => {
-        const availDocRef = doc(db, 'availabilities', availabilityId);
-        const availDoc = await transaction.get(availDocRef);
-        if (!availDoc.exists() || availDoc.data().claimedById) {
-          throw new Error("Availability not found or already claimed!");
-        }
+    const normalizedDay = normalizeDate(dayToClaim);
 
-        const original = fromFirestoreAvailability(availDoc);
-        dayToClaim.setHours(0, 0, 0, 0);
+    setAvailabilities(prev => {
+      const target = prev.find(entry => entry.id === availabilityId);
+      if (!target || target.claimedById) {
+        return prev;
+      }
 
-        transaction.delete(availDocRef);
+      const start = normalizeDate(target.startDate);
+      const end = normalizeDate(target.endDate);
+      if (normalizedDay.getTime() < start.getTime() || normalizedDay.getTime() > end.getTime()) {
+        return prev;
+      }
 
-        const newClaimedRef = doc(collection(db, 'availabilities'));
-        transaction.set(newClaimedRef, {
-          spotId: original.spotId,
-          startDate: Timestamp.fromDate(dayToClaim),
-          endDate: Timestamp.fromDate(dayToClaim),
-          claimedById: currentUser.id
+      const remaining = prev.filter(entry => entry.id !== availabilityId);
+      const updates: Availability[] = [
+        ...remaining,
+        {
+          id: generateId(),
+          spotId: target.spotId,
+          startDate: normalizedDay,
+          endDate: normalizedDay,
+          claimedById: currentUser.id,
+        },
+      ];
+
+      if (normalizedDay.getTime() > start.getTime()) {
+        updates.push({
+          id: generateId(),
+          spotId: target.spotId,
+          startDate: start,
+          endDate: addDays(normalizedDay, -1),
+          claimedById: null,
         });
+      }
 
-        if (dayToClaim.getTime() > original.startDate.getTime()) {
-            const beforeEndDate = new Date(dayToClaim);
-            beforeEndDate.setDate(dayToClaim.getDate() - 1);
-            const beforeRef = doc(collection(db, 'availabilities'));
-            transaction.set(beforeRef, {
-                spotId: original.spotId,
-                startDate: Timestamp.fromDate(original.startDate),
-                endDate: Timestamp.fromDate(beforeEndDate),
-                claimedById: null
-            });
-        }
-        if (dayToClaim.getTime() < original.endDate.getTime()) {
-            const afterStartDate = new Date(dayToClaim);
-            afterStartDate.setDate(dayToClaim.getDate() + 1);
-            const afterRef = doc(collection(db, 'availabilities'));
-            transaction.set(afterRef, {
-                spotId: original.spotId,
-                startDate: Timestamp.fromDate(afterStartDate),
-                endDate: Timestamp.fromDate(original.endDate),
-                claimedById: null
-            });
-        }
-      });
-    } catch (e: any) {
-      console.error("Transaction failed: ", e.message || e);
-    }
+      if (normalizedDay.getTime() < end.getTime()) {
+        updates.push({
+          id: generateId(),
+          spotId: target.spotId,
+          startDate: addDays(normalizedDay, 1),
+          endDate: end,
+          claimedById: null,
+        });
+      }
+
+      return sortAvailabilities(updates);
+    });
   };
   
   const handleRequestUnclaim = (availabilityId: string) => {
@@ -345,13 +458,8 @@ const App: React.FC = () => {
           title: 'Confirm Unclaim',
           message: `Are you sure you want to unclaim your spot for ${availability.startDate.toLocaleDateString()}?`,
           onConfirm: async () => {
-            try {
-              await updateDoc(doc(db, "availabilities", availabilityId), { claimedById: null });
-            } catch (e: any) {
-              console.error("Error unclaiming spot:", e.message || e);
-            } finally {
-              setConfirmationModalOpen(false);
-            }
+            setAvailabilities(prev => prev.map(entry => entry.id === availabilityId ? { ...entry, claimedById: null } : entry));
+            setConfirmationModalOpen(false);
           },
           confirmButtonText: 'Yes, Unclaim',
           confirmButtonVariant: 'destructive'
@@ -367,13 +475,8 @@ const App: React.FC = () => {
         title: 'Confirm Undo Availability',
         message: `Are you sure you want to remove this availability?`,
         onConfirm: async () => {
-          try {
-            await deleteDoc(doc(db, "availabilities", availabilityId));
-          } catch (e: any) {
-            console.error("Error undoing availability:", e.message || e);
-          } finally {
-            setConfirmationModalOpen(false);
-          }
+          setAvailabilities(prev => prev.filter(entry => entry.id !== availabilityId));
+          setConfirmationModalOpen(false);
         },
         confirmButtonText: 'Yes, Undo',
         confirmButtonVariant: 'destructive'
@@ -386,18 +489,9 @@ const App: React.FC = () => {
       title: 'Confirm Deletion',
       message: `Are you sure you want to permanently delete Spot #${spotId}?`,
       onConfirm: async () => {
-        try {
-          const batch = writeBatch(db);
-          batch.delete(doc(db, "parkingSpaces", String(spotId)));
-          const availsQuery = query(collection(db, "availabilities"), where("spotId", "==", spotId));
-          const availsToDelete = await getDocs(availsQuery);
-          availsToDelete.forEach(d => batch.delete(d.ref));
-          await batch.commit();
-        } catch (e: any) {
-          console.error("Error deleting spot:", e.message || e);
-        } finally {
-          setConfirmationModalOpen(false);
-        }
+        setParkingSpaces(prev => prev.filter(space => space.id !== spotId));
+        setAvailabilities(prev => prev.filter(entry => entry.spotId !== spotId));
+        setConfirmationModalOpen(false);
       },
       confirmButtonText: 'Delete Spot',
       confirmButtonVariant: 'destructive'
@@ -456,7 +550,7 @@ const App: React.FC = () => {
       ) : ownedSpot && !isAdmin ? (
         <OwnerView
           spot={ownedSpot}
-          users={allUsers}
+          users={users}
           availabilities={availabilities.filter(a => a.spotId === ownedSpot.id)}
           onRequestMarkAvailable={(startDate, endDate) => handleRequestMarkAvailable(ownedSpot.id, startDate, endDate)}
           onUndoAvailability={handleRequestUndoAvailability}
@@ -486,7 +580,7 @@ const App: React.FC = () => {
                   <ParkingSpaceCard
                     key={space.id}
                     space={space}
-                    owner={allUsers.find(u => u.id === space.ownerId)}
+                    owner={users.find(u => u.id === space.ownerId)}
                     availabilities={availabilities.filter(a => a.spotId === space.id)}
                     currentUser={currentUser}
                     isAdmin={isAdmin}
