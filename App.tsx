@@ -7,7 +7,8 @@ import AddSpotCard from './components/AddSpotCard';
 import AssignOwnerModal from './components/modals/AssignOwnerModal';
 import MarkAvailableModal from './components/modals/MarkAvailableModal';
 import ConfirmationModal from './components/modals/ConfirmationModal';
-import { getToday } from './utils/dateUtils';
+import OwnerView from './components/OwnerView';
+import { getToday, toYYYYMMDD } from './utils/dateUtils';
 import { Role } from './types';
 
 const App: React.FC = () => {
@@ -47,8 +48,8 @@ const App: React.FC = () => {
     [parkingSpaces]
   );
   
-  const currentUserOwnsSpot = useMemo(
-    () => parkingSpaces.some(p => p.ownerId === currentUser.id),
+  const ownedSpot = useMemo(
+    () => parkingSpaces.find(p => p.ownerId === currentUser.id),
     [parkingSpaces, currentUser]
   );
 
@@ -57,7 +58,7 @@ const App: React.FC = () => {
     [availabilities, currentUser]
   );
   
-  const canClaimSpot = !currentUserOwnsSpot && !userHasClaimedSpot;
+  const canClaimSpot = !ownedSpot && !userHasClaimedSpot;
 
   const handleAddSpot = () => {
     setParkingSpaces(prev => [...prev, { id: prev.length > 0 ? Math.max(...prev.map(p => p.id)) + 1 : 1, ownerId: null }]);
@@ -101,16 +102,59 @@ const App: React.FC = () => {
     setMarkAvailableModalOpen(true);
   };
   
-  const handleMarkAvailable = (spotId: number, startDate: Date, endDate: Date) => {
-    setAvailabilities(prev => [...prev, {
-      id: `avail-${Date.now()}`,
-      spotId,
-      startDate,
-      endDate,
-      claimedById: null
-    }]);
-    setMarkAvailableModalOpen(false);
-    setSelectedSpot(null);
+  const handleRequestMarkAvailable = (spotId: number, startDate: Date, endDate: Date): { success: boolean, message: string } => {
+    const newStart = new Date(startDate);
+    newStart.setHours(0,0,0,0);
+    const newEnd = new Date(endDate);
+    newEnd.setHours(0,0,0,0);
+
+    const overlappingAvailability = availabilities.find(existing => {
+      if (existing.spotId !== spotId) return false;
+      const existingStart = existing.startDate.getTime();
+      const existingEnd = existing.endDate.getTime();
+      return newStart.getTime() <= existingEnd && newEnd.getTime() >= existingStart;
+    });
+
+    const addNewAvailability = () => {
+      setAvailabilities(prev => [...prev, {
+        id: `avail-${Date.now()}`,
+        spotId,
+        startDate: newStart,
+        endDate: newEnd,
+        claimedById: null
+      }]);
+    };
+
+    if (overlappingAvailability) {
+      if (overlappingAvailability.claimedById) {
+        return { success: false, message: 'This period overlaps with a claimed availability and cannot be changed.' };
+      }
+
+      setConfirmationAction({
+        title: 'Overwrite Availability',
+        message: `Your new availability overlaps with an existing one (${toYYYYMMDD(overlappingAvailability.startDate)} to ${toYYYYMMDD(overlappingAvailability.endDate)}). Do you want to replace it?`,
+        onConfirm: () => {
+          setAvailabilities(prev => {
+            const filtered = prev.filter(a => a.id !== overlappingAvailability.id);
+            return [...filtered, {
+              id: `avail-${Date.now()}`,
+              spotId,
+              startDate: newStart,
+              endDate: newEnd,
+              claimedById: null
+            }];
+          });
+          setConfirmationModalOpen(false);
+        },
+        confirmButtonText: 'Overwrite',
+        confirmButtonVariant: 'destructive'
+      });
+      setConfirmationModalOpen(true);
+      return { success: true, message: '' };
+    }
+
+    addNewAvailability();
+    return { success: true, message: '' };
   };
 
   const handleClaimSpot = (availabilityId: string) => {
@@ -137,6 +181,27 @@ const App: React.FC = () => {
           confirmButtonVariant: 'destructive'
       });
       setConfirmationModalOpen(true);
+  }
+  
+  const handleUndoAvailability = (availabilityId: string) => {
+    setAvailabilities(prev => prev.filter(a => a.id !== availabilityId));
+  };
+
+  const handleRequestUndoAvailability = (availabilityId: string) => {
+    const availability = availabilities.find(a => a.id === availabilityId);
+    if (!availability) return;
+
+    setConfirmationAction({
+        title: 'Confirm Undo Availability',
+        message: `Are you sure you want to remove the availability for Spot #${availability.spotId} from ${availability.startDate.toLocaleDateString()} to ${availability.endDate.toLocaleDateString()}?`,
+        onConfirm: () => {
+            handleUndoAvailability(availabilityId);
+            setConfirmationModalOpen(false);
+        },
+        confirmButtonText: 'Yes, Undo',
+        confirmButtonVariant: 'destructive'
+    });
+    setConfirmationModalOpen(true);
   }
 
   const handleDeleteSpot = (spotId: number) => {
@@ -180,37 +245,46 @@ const App: React.FC = () => {
           onUserChange={setCurrentUser}
         />
       </header>
-      {currentUserOwnsSpot ? (
-        <div style={bannerStyle}>
-          You own a parking spot, so you cannot claim other available spots.
-        </div>
-      ) : userHasClaimedSpot ? (
-        <div style={bannerStyle}>
-          You have already claimed a spot. You can only claim one spot at a time.
-        </div>
-      ) : null}
-      <main>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-          {parkingSpaces.map(space => (
-            <ParkingSpaceCard
-              key={space.id}
-              space={space}
-              owner={MOCK_USERS.find(u => u.id === space.ownerId)}
-              availabilities={availabilities.filter(a => a.spotId === space.id)}
-              currentUser={currentUser}
-              isAdmin={isAdmin}
-              canClaimSpot={canClaimSpot}
-              onAssign={handleOpenAssignModal}
-              onUnassign={handleRequestUnassign}
-              onMarkAvailable={handleOpenMarkAvailableModal}
-              onClaim={handleClaimSpot}
-              onUnclaim={handleRequestUnclaim}
-              onDelete={handleRequestDelete}
-            />
-          ))}
-          {isAdmin && <AddSpotCard onAddSpot={handleAddSpot} />}
-        </div>
-      </main>
+
+      {ownedSpot && !isAdmin ? (
+        <OwnerView
+          spot={ownedSpot}
+          availabilities={availabilities.filter(a => a.spotId === ownedSpot.id)}
+          onRequestMarkAvailable={(startDate, endDate) => handleRequestMarkAvailable(ownedSpot.id, startDate, endDate)}
+          onUndoAvailability={handleRequestUndoAvailability}
+        />
+      ) : (
+        <>
+          {userHasClaimedSpot && !isAdmin && (
+             <div style={bannerStyle}>
+               You have already claimed a spot. You can only claim one spot at a time.
+             </div>
+          )}
+          <main>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+              {parkingSpaces.map(space => (
+                <ParkingSpaceCard
+                  key={space.id}
+                  space={space}
+                  owner={MOCK_USERS.find(u => u.id === space.ownerId)}
+                  availabilities={availabilities.filter(a => a.spotId === space.id)}
+                  currentUser={currentUser}
+                  isAdmin={isAdmin}
+                  canClaimSpot={canClaimSpot}
+                  onAssign={handleOpenAssignModal}
+                  onUnassign={handleRequestUnassign}
+                  onMarkAvailable={handleOpenMarkAvailableModal}
+                  onClaim={handleClaimSpot}
+                  onUnclaim={handleRequestUnclaim}
+                  onDelete={handleRequestDelete}
+                />
+              ))}
+              {isAdmin && <AddSpotCard onAddSpot={handleAddSpot} />}
+            </div>
+          </main>
+        </>
+      )}
+      
       {assignModalOpen && selectedSpot && (
         <AssignOwnerModal
           spot={selectedSpot}
@@ -222,7 +296,14 @@ const App: React.FC = () => {
       {markAvailableModalOpen && selectedSpot && (
         <MarkAvailableModal
           spot={selectedSpot}
-          onMarkAvailable={handleMarkAvailable}
+          onRequestMarkAvailable={(spotId, startDate, endDate) => {
+              const result = handleRequestMarkAvailable(spotId, startDate, endDate);
+              if (result.success) {
+                setMarkAvailableModalOpen(false);
+                setSelectedSpot(null);
+              }
+              return result;
+            }}
           onClose={() => setMarkAvailableModalOpen(false)}
         />
       )}

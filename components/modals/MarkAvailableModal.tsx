@@ -4,7 +4,7 @@ import { getToday, getTomorrow, toYYYYMMDD } from '../../utils/dateUtils';
 
 interface MarkAvailableModalProps {
   spot: ParkingSpace;
-  onMarkAvailable: (spotId: number, startDate: Date, endDate: Date) => void;
+  onRequestMarkAvailable: (spotId: number, startDate: Date, endDate: Date) => { success: boolean; message: string };
   onClose: () => void;
 }
 
@@ -75,10 +75,18 @@ const secondaryButtonStyle: React.CSSProperties = {
     fontFamily: "'Poppins', 'Source Serif Pro', sans-serif"
 };
 
-const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onMarkAvailable, onClose }) => {
+const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onRequestMarkAvailable, onClose }) => {
   const [startDate, setStartDate] = useState(toYYYYMMDD(getToday()));
   const [endDate, setEndDate] = useState(toYYYYMMDD(getTomorrow()));
   const [error, setError] = useState('');
+
+  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newStartDate = e.target.value;
+    setStartDate(newStartDate);
+    if (newStartDate > endDate) {
+      setEndDate(newStartDate);
+    }
+  };
 
   const handleMarkAvailable = () => {
     const start = new Date(startDate);
@@ -88,7 +96,10 @@ const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onMarkAva
       return;
     }
     setError('');
-    onMarkAvailable(spot.id, start, end);
+    const result = onRequestMarkAvailable(spot.id, start, end);
+    if (!result.success) {
+      setError(result.message);
+    }
   };
 
   return (
@@ -101,7 +112,7 @@ const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onMarkAva
                 type="date" 
                 id="start-date" 
                 value={startDate} 
-                onChange={e => setStartDate(e.target.value)}
+                onChange={handleStartDateChange}
                 min={toYYYYMMDD(getToday())}
                 style={inputStyle}
             />

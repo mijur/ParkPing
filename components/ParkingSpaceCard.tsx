@@ -1,6 +1,6 @@
 import React from 'react';
 import type { User, ParkingSpace, Availability } from '../types';
-import { toYYYYMMDD } from '../utils/dateUtils';
+import { getToday, getTomorrow, toYYYYMMDD } from '../utils/dateUtils';
 import { MOCK_USERS } from '../constants';
 
 interface ParkingSpaceCardProps {
@@ -99,6 +99,31 @@ const ParkingSpaceCard: React.FC<ParkingSpaceCardProps> = ({
   onDelete,
 }) => {
   const isOwner = owner?.id === currentUser.id;
+  const today = getToday();
+  const tomorrow = getTomorrow();
+  const now = new Date();
+  const isAfter4PM = now.getHours() >= 16;
+
+  const availabilityForToday = availabilities.find(a => 
+      !a.claimedById &&
+      a.startDate.getTime() <= today.getTime() &&
+      a.endDate.getTime() >= today.getTime()
+  );
+
+  const availabilityForTomorrow = availabilities.find(a => 
+      !a.claimedById &&
+      a.startDate.getTime() <= tomorrow.getTime() &&
+      a.endDate.getTime() >= tomorrow.getTime()
+  );
+
+  let claimAction: { availability: Availability; label: string } | null = null;
+
+  if (availabilityForToday) {
+      claimAction = { availability: availabilityForToday, label: 'Claim for Today' };
+  } else if (availabilityForTomorrow && isAfter4PM) {
+      claimAction = { availability: availabilityForTomorrow, label: 'Claim for Tomorrow' };
+  }
+
 
   return (
     <div style={cardStyle}>
@@ -133,7 +158,9 @@ const ParkingSpaceCard: React.FC<ParkingSpaceCardProps> = ({
                     )}
                   </div>
                 ) : (
-                  canClaimSpot && <button style={{...secondaryButtonStyle, marginTop: '8px'}} onClick={() => onClaim(avail.id)}>Claim</button>
+                  <div style={{ color: 'rgba(255, 255, 255, 0.7)', marginTop: '8px' }}>
+                     Available
+                  </div>
                 )}
               </li>
             ))}
@@ -142,11 +169,21 @@ const ParkingSpaceCard: React.FC<ParkingSpaceCardProps> = ({
           <p style={{margin: 0, color: 'rgba(255, 255, 255, 0.7)'}}>No availability set.</p>
         )}
         
-        {isOwner && (
-          <button style={{ ...primaryButtonStyle, marginTop: 'auto', backgroundColor: 'rgba(255,255,255,0.9)' }} onClick={() => onMarkAvailable(space)}>
-            Mark as Available
-          </button>
-        )}
+        <div style={{ marginTop: 'auto', paddingTop: '16px' }}>
+          {isOwner && (
+            <button style={{ ...primaryButtonStyle, backgroundColor: 'rgba(255,255,255,0.9)', width: '100%' }} onClick={() => onMarkAvailable(space)}>
+              Mark as Available
+            </button>
+          )}
+          {canClaimSpot && claimAction && (
+              <button 
+                  style={{ ...primaryButtonStyle, backgroundColor: 'rgba(255,255,255,0.9)', width: '100%' }} 
+                  onClick={() => onClaim(claimAction.availability.id)}
+              >
+                  {claimAction.label}
+              </button>
+          )}
+        </div>
       </div>
     </div>
   );
