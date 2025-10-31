@@ -4,7 +4,6 @@ import { getToday, getTomorrow, toYYYYMMDD, parseYYYYMMDD } from '../../utils/da
 
 interface MarkAvailableModalProps {
   spot: ParkingSpace;
-  // FIX: Update prop to accept a Promise, resolving the type mismatch from App.tsx.
   onRequestMarkAvailable: (spotId: number, startDate: Date, endDate: Date) => Promise<{ success: boolean; message: string }>;
   onClose: () => void;
 }
@@ -89,7 +88,6 @@ const MarkAvailableModal: React.FC<MarkAvailableModalProps> = ({ spot, onRequest
     }
   };
 
-  // FIX: Make handler async and await the promise from onRequestMarkAvailable.
   const handleMarkAvailable = async () => {
     const start = parseYYYYMMDD(startDate);
     const end = parseYYYYMMDD(endDate);

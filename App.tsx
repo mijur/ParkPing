@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile } from 'firebase/auth';
 import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc, query, where, writeBatch, getDocs, Timestamp, runTransaction } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
@@ -10,7 +10,8 @@ import AssignOwnerModal from './components/modals/AssignOwnerModal';
 import MarkAvailableModal from './components/modals/MarkAvailableModal';
 import ConfirmationModal from './components/modals/ConfirmationModal';
 import OwnerView from './components/OwnerView';
-import { getToday, toYYYYMMDD } from './utils/dateUtils';
+import LoginView from './components/LoginView';
+import { getToday } from './utils/dateUtils';
 import { Role } from './types';
 
 const fromFirestoreAvailability = (doc: any): Availability => {
@@ -46,37 +47,50 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          setCurrentUser({
-            id: firebaseUser.uid,
-            name: firebaseUser.displayName || 'User',
-            role: userDocSnap.data().role as Role,
-          });
+      try {
+        if (firebaseUser) {
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            setCurrentUser({
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || 'User',
+              role: userDocSnap.data().role as Role,
+            });
+          } else {
+            // This case handles user creation during sign-up
+            const newUser = { name: firebaseUser.displayName || 'New User', role: Role.User };
+            await setDoc(userDocRef, newUser);
+            setCurrentUser({ id: firebaseUser.uid, ...newUser });
+          }
         } else {
-          const newUser = { name: firebaseUser.displayName || 'New User', role: Role.User };
-          await setDoc(userDocRef, newUser);
-          setCurrentUser({ id: firebaseUser.uid, ...newUser });
+          setCurrentUser(null);
         }
-      } else {
+      } catch (e: any) {
+        console.error("Error during auth state change:", e.message || e);
         setCurrentUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     
     const usersUnsub = onSnapshot(collection(db, 'users'), (snapshot) => {
         setAllUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
+    }, (error) => {
+        console.error("Error fetching users:", error.message || error);
     });
 
     const spacesUnsub = onSnapshot(collection(db, 'parkingSpaces'), (snapshot) => {
         const spaces = snapshot.docs.map(doc => ({ ...doc.data() } as ParkingSpace)).sort((a, b) => a.id - b.id);
         setParkingSpaces(spaces);
+    }, (error) => {
+        console.error("Error fetching parking spaces:", error.message || error);
     });
 
     const availabilitiesUnsub = onSnapshot(collection(db, 'availabilities'), (snapshot) => {
         setAvailabilities(snapshot.docs.map(fromFirestoreAvailability));
+    }, (error) => {
+        console.error("Error fetching availabilities:", error.message || error);
     });
 
     return () => {
@@ -87,12 +101,23 @@ const App: React.FC = () => {
     };
   }, []);
   
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
+  const handleEmailLogin = async (email: string, password: string): Promise<{ success: boolean; message: string }> => {
     try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Error during sign in:", error);
+      await signInWithEmailAndPassword(auth, email, password);
+      return { success: true, message: '' };
+    } catch (error: any) {
+      return { success: false, message: error.message || 'Failed to login.' };
+    }
+  };
+
+  const handleEmailSignUp = async (email: string, password: string, name: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(userCredential.user, { displayName: name });
+      // The onAuthStateChanged listener will handle creating the user document in Firestore.
+      return { success: true, message: '' };
+    } catch (error: any) {
+      return { success: false, message: error.message || 'Failed to sign up.' };
     }
   };
 
@@ -164,8 +189,12 @@ const App: React.FC = () => {
   const handlePreviousWeek = () => setWeekOffset(prev => Math.max(prev - 1, 0));
 
   const handleAddSpot = async () => {
-    const newId = parkingSpaces.length > 0 ? Math.max(...parkingSpaces.map(p => p.id)) + 1 : 1;
-    await setDoc(doc(db, "parkingSpaces", String(newId)), { id: newId, ownerId: null });
+    try {
+      const newId = parkingSpaces.length > 0 ? Math.max(...parkingSpaces.map(p => p.id)) + 1 : 1;
+      await setDoc(doc(db, "parkingSpaces", String(newId)), { id: newId, ownerId: null });
+    } catch (e: any) {
+      console.error("Error adding spot:", e.message || e);
+    }
   };
 
   const handleOpenAssignModal = (spot: ParkingSpace) => {
@@ -174,9 +203,14 @@ const App: React.FC = () => {
   };
   
   const handleAssignOwner = async (spotId: number, ownerId: string) => {
-    await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId });
-    setAssignModalOpen(false);
-    setSelectedSpot(null);
+    try {
+      await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId });
+    } catch (e: any) {
+      console.error("Error assigning owner:", e.message || e);
+    } finally {
+      setAssignModalOpen(false);
+      setSelectedSpot(null);
+    }
   };
   
   const handleRequestUnassign = (spotId: number) => {
@@ -188,8 +222,13 @@ const App: React.FC = () => {
       title: 'Confirm Unassign',
       message: `Are you sure you want to unassign ${owner.name} from Spot #${spot.id}?`,
       onConfirm: async () => {
-        await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId: null });
-        setConfirmationModalOpen(false);
+        try {
+          await updateDoc(doc(db, "parkingSpaces", String(spotId)), { ownerId: null });
+        } catch(e: any) {
+          console.error("Error unassigning owner:", e.message || e);
+        } finally {
+          setConfirmationModalOpen(false);
+        }
       },
       confirmButtonText: 'Unassign',
       confirmButtonVariant: 'destructive'
@@ -203,37 +242,47 @@ const App: React.FC = () => {
   };
   
   const handleRequestMarkAvailable = async (spotId: number, startDate: Date, endDate: Date): Promise<{ success: boolean, message: string }> => {
-    const newStart = Timestamp.fromDate(startDate);
-    const newEnd = Timestamp.fromDate(endDate);
+    try {
+      const newStart = Timestamp.fromDate(startDate);
+      const newEnd = Timestamp.fromDate(endDate);
 
-    const q = query(collection(db, "availabilities"), where("spotId", "==", spotId));
-    const querySnapshot = await getDocs(q);
-    const overlapping = querySnapshot.docs.find(docSnap => {
-        const d = docSnap.data();
-        return newStart.seconds <= d.endDate.seconds && newEnd.seconds >= d.startDate.seconds;
-    });
-
-    if (overlapping) {
-      if (overlapping.data().claimedById) {
-        return { success: false, message: 'This period overlaps with a claimed availability and cannot be changed.' };
-      }
-      setConfirmationAction({
-        title: 'Overwrite Availability',
-        message: `Your new availability overlaps with an existing one. Do you want to replace it?`,
-        onConfirm: async () => {
-          const batch = writeBatch(db);
-          batch.delete(doc(db, "availabilities", overlapping.id));
-          batch.set(doc(collection(db, "availabilities")), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
-          await batch.commit();
-          setConfirmationModalOpen(false);
-        },
-        confirmButtonText: 'Overwrite',
+      const q = query(collection(db, "availabilities"), where("spotId", "==", spotId));
+      const querySnapshot = await getDocs(q);
+      const overlapping = querySnapshot.docs.find(docSnap => {
+          const d = docSnap.data();
+          return newStart.seconds <= d.endDate.seconds && newEnd.seconds >= d.startDate.seconds;
       });
-      setConfirmationModalOpen(true);
-      return { success: true, message: '' };
-    } else {
-        await addDoc(collection(db, "availabilities"), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
+
+      if (overlapping) {
+        if (overlapping.data().claimedById) {
+          return { success: false, message: 'This period overlaps with a claimed availability and cannot be changed.' };
+        }
+        setConfirmationAction({
+          title: 'Overwrite Availability',
+          message: `Your new availability overlaps with an existing one. Do you want to replace it?`,
+          onConfirm: async () => {
+            try {
+              const batch = writeBatch(db);
+              batch.delete(doc(db, "availabilities", overlapping.id));
+              batch.set(doc(collection(db, "availabilities")), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
+              await batch.commit();
+            } catch (e: any) {
+              console.error("Error overwriting availability:", e.message || e);
+            } finally {
+              setConfirmationModalOpen(false);
+            }
+          },
+          confirmButtonText: 'Overwrite',
+        });
+        setConfirmationModalOpen(true);
         return { success: true, message: '' };
+      } else {
+          await addDoc(collection(db, "availabilities"), { spotId, startDate: newStart, endDate: newEnd, claimedById: null });
+          return { success: true, message: '' };
+      }
+    } catch (e: any) {
+      console.error("Error marking available:", e.message || e);
+      return { success: false, message: 'An unexpected error occurred. Please try again.' };
     }
   };
 
@@ -283,8 +332,8 @@ const App: React.FC = () => {
             });
         }
       });
-    } catch (e) {
-      console.error("Transaction failed: ", e);
+    } catch (e: any) {
+      console.error("Transaction failed: ", e.message || e);
     }
   };
   
@@ -296,8 +345,13 @@ const App: React.FC = () => {
           title: 'Confirm Unclaim',
           message: `Are you sure you want to unclaim your spot for ${availability.startDate.toLocaleDateString()}?`,
           onConfirm: async () => {
+            try {
               await updateDoc(doc(db, "availabilities", availabilityId), { claimedById: null });
+            } catch (e: any) {
+              console.error("Error unclaiming spot:", e.message || e);
+            } finally {
               setConfirmationModalOpen(false);
+            }
           },
           confirmButtonText: 'Yes, Unclaim',
           confirmButtonVariant: 'destructive'
@@ -313,8 +367,13 @@ const App: React.FC = () => {
         title: 'Confirm Undo Availability',
         message: `Are you sure you want to remove this availability?`,
         onConfirm: async () => {
+          try {
             await deleteDoc(doc(db, "availabilities", availabilityId));
+          } catch (e: any) {
+            console.error("Error undoing availability:", e.message || e);
+          } finally {
             setConfirmationModalOpen(false);
+          }
         },
         confirmButtonText: 'Yes, Undo',
         confirmButtonVariant: 'destructive'
@@ -327,13 +386,18 @@ const App: React.FC = () => {
       title: 'Confirm Deletion',
       message: `Are you sure you want to permanently delete Spot #${spotId}?`,
       onConfirm: async () => {
-        const batch = writeBatch(db);
-        batch.delete(doc(db, "parkingSpaces", String(spotId)));
-        const availsQuery = query(collection(db, "availabilities"), where("spotId", "==", spotId));
-        const availsToDelete = await getDocs(availsQuery);
-        availsToDelete.forEach(d => batch.delete(d.ref));
-        await batch.commit();
-        setConfirmationModalOpen(false);
+        try {
+          const batch = writeBatch(db);
+          batch.delete(doc(db, "parkingSpaces", String(spotId)));
+          const availsQuery = query(collection(db, "availabilities"), where("spotId", "==", spotId));
+          const availsToDelete = await getDocs(availsQuery);
+          availsToDelete.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        } catch (e: any) {
+          console.error("Error deleting spot:", e.message || e);
+        } finally {
+          setConfirmationModalOpen(false);
+        }
       },
       confirmButtonText: 'Delete Spot',
       confirmButtonVariant: 'destructive'
@@ -349,7 +413,6 @@ const App: React.FC = () => {
   const toggleButtonStyle: React.CSSProperties = { padding: '8px 16px', border: '1px solid white', borderRadius: '8px', cursor: 'pointer', backgroundColor: 'transparent', color: 'white', fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", fontWeight: 500 };
   const weekButtonStyle: React.CSSProperties = { padding: '8px 12px', border: '1px solid white', borderRadius: '8px', cursor: 'pointer', backgroundColor: 'transparent', color: 'white', fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", fontWeight: 700, fontSize: '16px' };
   const disabledButtonStyle: React.CSSProperties = { opacity: 0.5, cursor: 'not-allowed', borderColor: 'rgba(255, 255, 255, 0.5)', color: 'rgba(255, 255, 255, 0.5)' };
-  const loginButtonStyle: React.CSSProperties = { padding: '12px 24px', border: 'none', borderRadius: '12px', cursor: 'pointer', backgroundColor: 'white', color: '#5A48E5', fontWeight: 700, fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", fontSize: '18px' };
   
   const getViewConfig = () => {
     if (isAdmin) {
@@ -380,18 +443,16 @@ const App: React.FC = () => {
     <div style={{ fontFamily: "'Poppins', 'Source Serif Pro', sans-serif", padding: '40px', backgroundColor: '#5A48E5', minHeight: '100vh', color: 'white' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
         <h1 style={{ fontSize: '48px', fontWeight: 700, margin: 0 }}>SpyroPark</h1>
-        {currentUser ? (
+        {currentUser && (
           <div style={{textAlign: 'right'}}>
             <p style={{margin: '0 0 8px 0'}}>Welcome, {currentUser.name}</p>
             <button onClick={handleLogout} style={{...toggleButtonStyle, borderColor: '#FFB8B8', color: '#FFB8B8'}}>Logout</button>
           </div>
-        ) : (
-          <button onClick={handleLogin} style={loginButtonStyle}>Sign in with Google</button>
         )}
       </header>
 
       {!currentUser ? (
-        <div style={bannerStyle}>Please sign in to manage and claim parking spots.</div>
+        <LoginView onLogin={handleEmailLogin} onSignUp={handleEmailSignUp} />
       ) : ownedSpot && !isAdmin ? (
         <OwnerView
           spot={ownedSpot}
