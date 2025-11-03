@@ -2,7 +2,6 @@
 ## Runtime & Setup
 - Install dependencies with `npm install`; project uses Vite 6 + React 19 + TypeScript 5.
 - Start dev server via `npm run dev`; Vite serves on http://localhost:3000 with host 0.0.0.0.
-- Create `.env.local` with `GEMINI_API_KEY=...`; Vite injects as `process.env.GEMINI_API_KEY`.
 - Build and preview using `npm run build` / `npm run preview` to mirror deployment.
 
 ## Architecture
