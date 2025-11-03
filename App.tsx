@@ -12,11 +12,6 @@ import { Role } from './types';
 import * as authService from './services/auth';
 import * as dbService from './services/database';
 
-const generateId = (): string =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `id-${Math.random().toString(16).slice(2)}-${Date.now()}`;
-
 const normalizeDate = (value: Date): Date => {
   const normalized = new Date(value);
   normalized.setHours(0, 0, 0, 0);
