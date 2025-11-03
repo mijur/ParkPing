@@ -4,6 +4,19 @@ export const getToday = (): Date => {
   return today;
 };
 
+export const normalizeDate = (value: Date): Date => {
+  const normalized = new Date(value);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+};
+
+export const addDays = (value: Date, amount: number): Date => {
+  const updated = new Date(value);
+  updated.setDate(updated.getDate() + amount);
+  updated.setHours(0, 0, 0, 0);
+  return updated;
+};
+
 export const getTomorrow = (): Date => {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
