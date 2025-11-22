@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import supabase from '../utils/supabase';
 import type { User, ParkingSpace, Availability } from '../types';
 import { Role } from '../types';
 

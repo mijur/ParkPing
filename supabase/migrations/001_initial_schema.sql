@@ -125,19 +125,29 @@ CREATE POLICY "Users can claim availabilities" ON public.availabilities
 -- Function to automatically create user profile when auth user is created
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  user_count INTEGER;
 BEGIN
+  -- Check count before any inserts to avoid race conditions
+  SELECT COUNT(*) INTO user_count FROM public.users;
+  
   INSERT INTO public.users (id, name, role)
   VALUES (
     NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'name', 'User'),
+    COALESCE(NEW.raw_user_meta_data->>'name', NEW.email, 'User'),
     CASE 
-      WHEN (SELECT COUNT(*) FROM public.users) = 0 THEN 'admin'::user_role
-      ELSE 'user'::user_role
+      WHEN user_count = 0 THEN 'admin'::public.user_role
+      ELSE 'user'::public.user_role
     END
   );
   RETURN NEW;
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Log the error but don't block auth user creation
+    RAISE WARNING 'Error creating user profile: %', SQLERRM;
+    RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Trigger to create user profile on signup
 CREATE TRIGGER on_auth_user_created

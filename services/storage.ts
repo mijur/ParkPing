@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import supabase from '../utils/supabase';
 
 const STORAGE_BUCKET = 'parking-documents'; // You can change this bucket name
 
