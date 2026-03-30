@@ -131,8 +131,10 @@ const App: React.FC = () => {
 
   const handleAddSpot = async () => {
     const result = await OperationHandler.handleAddSpot(isAdmin);
-    if (result.success && result.parkingSpace) {
-      setParkingSpaces(prev => [...prev, result.parkingSpace]);
+    const { parkingSpace } = result;
+
+    if (result.success && parkingSpace) {
+      setParkingSpaces(prev => [...prev, parkingSpace]);
     } else if (result.message) {
       alert(result.message);
     }
@@ -198,10 +200,12 @@ const App: React.FC = () => {
             endDate,
             overlapping.id
           );
-          if (overwriteResult.success && overwriteResult.availability) {
+          const { availability } = overwriteResult;
+
+          if (overwriteResult.success && availability) {
             setAvailabilities(prev => {
               const filtered = prev.filter(entry => entry.id !== overlapping.id);
-              return AvailabilityManager.sortAvailabilities([...filtered, overwriteResult.availability]);
+              return AvailabilityManager.sortAvailabilities([...filtered, availability]);
             });
           }
           modals.closeConfirmation();
@@ -210,8 +214,10 @@ const App: React.FC = () => {
       return { success: true, message: '' };
     }
 
-    if (result.success && result.availability) {
-      setAvailabilities(prev => AvailabilityManager.sortAvailabilities([...prev, result.availability]));
+    const { availability } = result;
+
+    if (result.success && availability) {
+      setAvailabilities(prev => AvailabilityManager.sortAvailabilities([...prev, availability]));
     }
 
     return result;
