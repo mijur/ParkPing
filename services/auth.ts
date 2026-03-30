@@ -13,6 +13,9 @@ export interface SignInData {
   password: string;
 }
 
+const getErrorMessage = (error: unknown, fallback: string): string =>
+  error instanceof Error ? error.message : fallback;
+
 // Authentication operations
 export const signUp = async (data: SignUpData): Promise<{ success: boolean; message: string; user?: User }> => {
   try {
@@ -54,8 +57,8 @@ export const signUp = async (data: SignUpData): Promise<{ success: boolean; mess
         role: userData.role === 'admin' ? Role.Admin : Role.User,
       },
     };
-  } catch (error: any) {
-    return { success: false, message: error.message || 'An error occurred during sign up' };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, 'An error occurred during sign up') };
   }
 };
 
@@ -94,8 +97,8 @@ export const signIn = async (data: SignInData): Promise<{ success: boolean; mess
         role: userData.role === 'admin' ? Role.Admin : Role.User,
       },
     };
-  } catch (error: any) {
-    return { success: false, message: error.message || 'An error occurred during sign in' };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, 'An error occurred during sign in') };
   }
 };
 
@@ -137,4 +140,3 @@ export const onAuthStateChange = (callback: (user: User | null) => void) => {
     }
   });
 };
-

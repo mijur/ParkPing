@@ -1,12 +1,16 @@
 import type { User, ParkingSpace, Availability } from '../types';
 import { AvailabilityManager } from './availabilityManager';
 import { SpotManager } from './spotManager';
-import * as dbService from './database';
 
 export interface HandlerResult {
   success: boolean;
   message: string;
+  parkingSpace?: ParkingSpace;
+  availability?: Availability;
 }
+
+const getErrorMessage = (error: unknown, fallback: string): string =>
+  error instanceof Error ? error.message : fallback;
 
 /**
  * Handles all user-triggered operations and business logic
@@ -20,12 +24,12 @@ export class OperationHandler {
       return { success: false, message: 'Only admins can add parking spots' };
     }
     try {
-      await SpotManager.createParkingSpace();
-      return { success: true, message: '' };
-    } catch (error: any) {
+      const parkingSpace = await SpotManager.createParkingSpace();
+      return { success: true, message: '', parkingSpace };
+    } catch (error: unknown) {
       return {
         success: false,
-        message: `Failed to add parking spot: ${error?.message || 'Unknown error'}`,
+        message: `Failed to add parking spot: ${getErrorMessage(error, 'Unknown error')}`,
       };
     }
   }
@@ -40,10 +44,10 @@ export class OperationHandler {
     try {
       await SpotManager.updateParkingSpace(spotId, { ownerId });
       return { success: true, message: '' };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: false,
-        message: `Failed to assign owner: ${error?.message || 'Unknown error'}`,
+        message: `Failed to assign owner: ${getErrorMessage(error, 'Unknown error')}`,
       };
     }
   }
@@ -55,10 +59,10 @@ export class OperationHandler {
     try {
       await SpotManager.updateParkingSpace(spotId, { ownerId: null });
       return { success: true, message: '' };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: false,
-        message: `Failed to unassign owner: ${error?.message || 'Unknown error'}`,
+        message: `Failed to unassign owner: ${getErrorMessage(error, 'Unknown error')}`,
       };
     }
   }
@@ -70,10 +74,10 @@ export class OperationHandler {
     try {
       await SpotManager.deleteParkingSpace(spotId);
       return { success: true, message: '' };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: false,
-        message: `Failed to delete spot: ${error?.message || 'Unknown error'}`,
+        message: `Failed to delete spot: ${getErrorMessage(error, 'Unknown error')}`,
       };
     }
   }
@@ -107,12 +111,12 @@ export class OperationHandler {
         return { success: false, message: 'NEEDS_CONFIRMATION' };
       }
 
-      await AvailabilityManager.createAvailability(spotId, startDate, endDate);
-      return { success: true, message: '' };
-    } catch (error: any) {
+      const availability = await AvailabilityManager.createAvailability(spotId, startDate, endDate);
+      return { success: true, message: '', availability };
+    } catch (error: unknown) {
       return {
         success: false,
-        message: error.message || 'Failed to create availability',
+        message: getErrorMessage(error, 'Failed to create availability'),
       };
     }
   }
@@ -128,12 +132,12 @@ export class OperationHandler {
   ): Promise<HandlerResult> {
     try {
       await AvailabilityManager.deleteAvailability(overlappingId);
-      await AvailabilityManager.createAvailability(spotId, startDate, endDate);
-      return { success: true, message: '' };
-    } catch (error: any) {
+      const availability = await AvailabilityManager.createAvailability(spotId, startDate, endDate);
+      return { success: true, message: '', availability };
+    } catch (error: unknown) {
       return {
         success: false,
-        message: `Failed to overwrite availability: ${error?.message || 'Unknown error'}`,
+        message: `Failed to overwrite availability: ${getErrorMessage(error, 'Unknown error')}`,
       };
     }
   }
@@ -159,10 +163,10 @@ export class OperationHandler {
         availabilities
       );
       return { success: true, message: '' };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: false,
-        message: error.message || 'Failed to claim day',
+        message: getErrorMessage(error, 'Failed to claim day'),
       };
     }
   }
@@ -174,10 +178,10 @@ export class OperationHandler {
     try {
       await AvailabilityManager.unclaimAvailability(availabilityId);
       return { success: true, message: '' };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: false,
-        message: `Failed to unclaim: ${error?.message || 'Unknown error'}`,
+        message: `Failed to unclaim: ${getErrorMessage(error, 'Unknown error')}`,
       };
     }
   }
@@ -189,10 +193,10 @@ export class OperationHandler {
     try {
       await AvailabilityManager.deleteAvailability(availabilityId);
       return { success: true, message: '' };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: false,
-        message: `Failed to delete availability: ${error?.message || 'Unknown error'}`,
+        message: `Failed to delete availability: ${getErrorMessage(error, 'Unknown error')}`,
       };
     }
   }

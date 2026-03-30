@@ -131,9 +131,8 @@ const App: React.FC = () => {
 
   const handleAddSpot = async () => {
     const result = await OperationHandler.handleAddSpot(isAdmin);
-    if (result.success) {
-      const newSpace = await dbService.createParkingSpace();
-      setParkingSpaces(prev => [...prev, newSpace]);
+    if (result.success && result.parkingSpace) {
+      setParkingSpaces(prev => [...prev, result.parkingSpace]);
     } else if (result.message) {
       alert(result.message);
     }
@@ -199,12 +198,10 @@ const App: React.FC = () => {
             endDate,
             overlapping.id
           );
-          if (overwriteResult.success) {
-            await AvailabilityManager.deleteAvailability(overlapping.id);
-            const newAvail = await AvailabilityManager.createAvailability(spotId, startDate, endDate);
+          if (overwriteResult.success && overwriteResult.availability) {
             setAvailabilities(prev => {
               const filtered = prev.filter(entry => entry.id !== overlapping.id);
-              return AvailabilityManager.sortAvailabilities([...filtered, newAvail]);
+              return AvailabilityManager.sortAvailabilities([...filtered, overwriteResult.availability]);
             });
           }
           modals.closeConfirmation();
@@ -213,9 +210,8 @@ const App: React.FC = () => {
       return { success: true, message: '' };
     }
 
-    if (result.success) {
-      const newAvail = await AvailabilityManager.createAvailability(spotId, startDate, endDate);
-      setAvailabilities(prev => AvailabilityManager.sortAvailabilities([...prev, newAvail]));
+    if (result.success && result.availability) {
+      setAvailabilities(prev => AvailabilityManager.sortAvailabilities([...prev, result.availability]));
     }
 
     return result;

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { User, ParkingSpace, Availability } from '../types';
+import { Role } from '../types';
 import { AvailabilityManager } from '../services/availabilityManager';
 import { SpotManager } from '../services/spotManager';
 import * as dbService from '../services/database';
@@ -74,7 +75,7 @@ export const useAppState = () => {
     [users, parkingSpaces]
   );
 
-  const isAdmin = currentUser?.role?.toString() === '0'; // Assuming Role.Admin is '0'
+  const isAdmin = currentUser?.role === Role.Admin;
 
   // Callbacks for state updates
   const updateParkingSpaces = useCallback((updater: (prev: ParkingSpace[]) => ParkingSpace[]) => {

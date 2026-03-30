@@ -28,6 +28,12 @@ interface DbAvailability {
   updated_at?: string;
 }
 
+interface AvailabilityUpdateData {
+  start_date?: string;
+  end_date?: string;
+  claimed_by_id?: string | null;
+}
+
 // Convert database types to app types
 const dbUserToUser = (dbUser: DbUser): User => ({
   id: dbUser.id,
@@ -153,7 +159,7 @@ export const updateAvailability = async (
   availabilityId: string,
   updates: Partial<Availability>
 ): Promise<void> => {
-  const updateData: any = {};
+  const updateData: AvailabilityUpdateData = {};
   
   if (updates.startDate !== undefined) {
     updateData.start_date = updates.startDate.toISOString().split('T')[0];
@@ -226,4 +232,3 @@ export const subscribeToAvailabilities = (
     }
   };
 };
-
