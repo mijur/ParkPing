@@ -104,7 +104,7 @@ export const signOut = async (): Promise<void> => {
     const { error } = await supabase.auth.signOut();
 
     if (error) {
-      console.warn('Failed to fully sign out from Supabase, clearing local auth session anyway:', error);
+      console.warn('Failed to invalidate the Supabase server session, but local auth tokens were cleared. Signing out again may still be required on other devices:', error);
     }
   } finally {
     clearPersistedAuthSession();
