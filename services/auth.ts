@@ -103,12 +103,27 @@ export const signOut = async (): Promise<void> => {
   await supabase.auth.signOut();
 };
 
+export const initializeAuth = async (): Promise<void> => {
+  const { error } = await supabase.auth.getSession();
+
+  if (error) {
+    throw new Error(`Failed to initialize auth session: ${error.message}`);
+  }
+};
+
 export const getCurrentUser = async (): Promise<User | null> => {
-  const { data: { user: authUser } } = await supabase.auth.getUser();
-  
-  if (!authUser) {
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    console.error('Failed to retrieve auth session while resolving current user:', sessionError);
     return null;
   }
+
+  if (!session?.user) {
+    return null;
+  }
+
+  const authUser = session.user;
 
   const { data: userData, error } = await supabase
     .from('users')
@@ -137,4 +152,3 @@ export const onAuthStateChange = (callback: (user: User | null) => void) => {
     }
   });
 };
-

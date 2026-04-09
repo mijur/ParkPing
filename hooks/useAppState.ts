@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { User, ParkingSpace, Availability } from '../types';
 import { AvailabilityManager } from '../services/availabilityManager';
 import { SpotManager } from '../services/spotManager';
+import * as authService from '../services/auth';
 import * as dbService from '../services/database';
 
 /**
@@ -21,6 +22,9 @@ export const useAppState = () => {
     const loadData = async () => {
       try {
         setLoading(true);
+        await authService.initializeAuth().catch(error => {
+          console.warn('Failed to initialize auth session before loading data:', error);
+        });
         const [usersData, spacesData, availabilitiesData] = await Promise.all([
           dbService.fetchUsers().catch(err => {
             console.warn('Failed to load users:', err);
