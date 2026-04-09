@@ -7,12 +7,29 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies and build output
 node_modules
 dist
 dist-ssr
 *.local
 .env
 .env.local
+.env.*
+!.env.example
+
+# Local backups and dumps
+*.backup
+*.backup.gz
+*.dump
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/
+supabase/restore_from_backup.sql
+
+# Local Copilot/agent tooling
+.agents/
+skills-lock.json
 
 # Editor directories and files
 .vscode/*
