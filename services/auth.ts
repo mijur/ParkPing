@@ -1,4 +1,4 @@
-import supabase from '../utils/supabase'
+import supabase, { clearPersistedAuthSession } from '../utils/supabase'
 import type { User } from '../types';
 import { Role } from '../types';
 
@@ -100,13 +100,22 @@ export const signIn = async (data: SignInData): Promise<{ success: boolean; mess
 };
 
 export const signOut = async (): Promise<void> => {
-  await supabase.auth.signOut();
+  try {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      console.warn('Supabase server sign-out failed, but the local auth session was cleared:', error);
+    }
+  } finally {
+    clearPersistedAuthSession();
+  }
 };
 
 export const initializeAuth = async (): Promise<void> => {
   const { error } = await supabase.auth.getSession();
 
   if (error) {
+    clearPersistedAuthSession();
     throw new Error(`Failed to initialize auth session: ${error.message}`);
   }
 };
@@ -115,6 +124,7 @@ export const getCurrentUser = async (): Promise<User | null> => {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
   if (sessionError) {
+    clearPersistedAuthSession();
     console.error('Failed to retrieve auth session while resolving current user:', sessionError);
     return null;
   }
@@ -148,6 +158,7 @@ export const onAuthStateChange = (callback: (user: User | null) => void) => {
       const user = await getCurrentUser();
       callback(user);
     } else {
+      clearPersistedAuthSession();
       callback(null);
     }
   });
