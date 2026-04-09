@@ -107,7 +107,7 @@ export const initializeAuth = async (): Promise<void> => {
   const { error } = await supabase.auth.getSession();
 
   if (error) {
-    throw new Error(`Failed to retrieve auth session during initialization: ${error.message}`);
+    throw new Error(`Failed to initialize auth session: ${error.message}`);
   }
 };
 

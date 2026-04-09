@@ -23,7 +23,7 @@ export const useAppState = () => {
       try {
         setLoading(true);
         await authService.initializeAuth().catch(error => {
-          console.warn('Failed to restore auth session before loading data:', error);
+          console.warn('Failed to initialize auth session before loading data:', error);
         });
         const [usersData, spacesData, availabilitiesData] = await Promise.all([
           dbService.fetchUsers().catch(err => {
