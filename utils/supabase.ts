@@ -3,9 +3,16 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabaseProjectRef = new URL(supabaseUrl).hostname.split('.')[0];
 
-export const supabaseAuthStorageKey = `sb-${supabaseProjectRef}-auth-token`;
+const getSupabaseAuthStorageKey = (url: string | undefined) => {
+  try {
+    return `sb-${new URL(url).hostname.split('.')[0]}-auth-token`;
+  } catch {
+    return 'sb-auth-token';
+  }
+};
+
+export const supabaseAuthStorageKey = getSupabaseAuthStorageKey(supabaseUrl);
 
 export const clearPersistedAuthSession = () => {
   if (typeof window === 'undefined') {
