@@ -103,12 +103,22 @@ export const signOut = async (): Promise<void> => {
   await supabase.auth.signOut();
 };
 
+export const initializeAuth = async (): Promise<void> => {
+  const { error } = await supabase.auth.getSession();
+
+  if (error) {
+    throw error;
+  }
+};
+
 export const getCurrentUser = async (): Promise<User | null> => {
-  const { data: { user: authUser } } = await supabase.auth.getUser();
-  
-  if (!authUser) {
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+  if (sessionError || !session?.user) {
     return null;
   }
+
+  const authUser = session.user;
 
   const { data: userData, error } = await supabase
     .from('users')
@@ -137,4 +147,3 @@ export const onAuthStateChange = (callback: (user: User | null) => void) => {
     }
   });
 };
-
