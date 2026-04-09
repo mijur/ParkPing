@@ -3,16 +3,17 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const fallbackSupabaseAuthStorageKey = 'sb-parkping-auth-token';
 
 const getSupabaseAuthStorageKey = (url: string | undefined) => {
   if (!url) {
-    return 'sb-parkping-auth-token';
+    return fallbackSupabaseAuthStorageKey;
   }
 
   try {
     return `sb-${new URL(url).hostname.split('.')[0]}-auth-token`;
   } catch {
-    return 'sb-parkping-auth-token';
+    return fallbackSupabaseAuthStorageKey;
   }
 };
 
