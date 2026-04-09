@@ -2,6 +2,24 @@
 
 ParkPing is a React + Vite parking spot sharing app backed by Supabase authentication, database storage, and realtime updates. It helps admins assign parking spaces, owners publish availability windows, and users claim open days.
 
+## Screenshots
+
+### Guest login
+
+![Guest login screen](https://github.com/user-attachments/assets/9c667e43-6b94-462d-908f-a2c626c497c0)
+
+### Admin dashboard
+
+![Admin dashboard screen](https://github.com/user-attachments/assets/82f97644-3227-4b87-83ea-708fc781dc50)
+
+### Owner availability view
+
+![Owner availability screen](https://github.com/user-attachments/assets/92453e94-318e-4a02-a176-eacd5b4deabe)
+
+### User claiming view
+
+![User claiming screen](https://github.com/user-attachments/assets/77dd0c69-b669-4612-ab92-4b1ecbdb2565)
+
 ## Tech stack
 
 - React 19
