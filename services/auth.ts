@@ -107,14 +107,19 @@ export const initializeAuth = async (): Promise<void> => {
   const { error } = await supabase.auth.getSession();
 
   if (error) {
-    throw new Error(`Failed to restore persisted auth session during initialization: ${error.message}`);
+    throw new Error(`Failed to retrieve auth session during initialization: ${error.message}`);
   }
 };
 
 export const getCurrentUser = async (): Promise<User | null> => {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-  if (sessionError || !session?.user) {
+  if (sessionError) {
+    console.error('Failed to retrieve auth session while resolving current user:', sessionError);
+    return null;
+  }
+
+  if (!session?.user) {
     return null;
   }
 
