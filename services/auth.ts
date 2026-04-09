@@ -107,7 +107,7 @@ export const initializeAuth = async (): Promise<void> => {
   const { error } = await supabase.auth.getSession();
 
   if (error) {
-    throw new Error(`Failed to restore auth session: ${error.message}`);
+    throw new Error(`Failed to restore persisted auth session during initialization: ${error.message}`);
   }
 };
 
